@@ -5,7 +5,7 @@
 #ifndef SPEED_WATCHER_MESSAGE_H
 #define SPEED_WATCHER_MESSAGE_H
 
-#include "watcherMessage.h"
+#include "message.h"
 
 namespace watcher {
     namespace event {
@@ -20,22 +20,13 @@ namespace watcher {
                 friend class boost::serialization::access;
                 template <typename Archive> void serialize(Archive & ar, const unsigned int version);
                 DECLARE_LOGGER();
-                float speed;    //< playback speed.  negative value indicates reverse direction
 
             public:
+                float speed;    //< playback speed.  negative value indicates reverse direction
                 SpeedMessage(float speed = 1.0);
                 bool operator== (const SpeedMessage& rhs) const { return speed == rhs.speed; }
                 friend std::ostream& operator<< (std::ostream& o, const SpeedMessage& rhs);
         };
-
-        template <typename Archive>
-        void SpeedMessage::serialize(Archive & ar, const unsigned int version)
-        {
-            TRACE_ENTER();
-            ar & boost::serialization::base_object<Message>(*this);
-            ar & speed;
-            TRACE_EXIT();
-        }
 
         typedef boost::shared_ptr<SpeedMessage> SpeedMessagePtr;
     }
