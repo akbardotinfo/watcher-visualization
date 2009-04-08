@@ -5,7 +5,7 @@
 #ifndef SEEK_WATCHER_MESSAGE_H
 #define SEEK_WATCHER_MESSAGE_H
 
-#include "watcherMessage.h"
+#include "message.h"
 
 namespace watcher {
     namespace event {
@@ -23,8 +23,12 @@ namespace watcher {
                     cur,        //< offset is relative to current position in stream
                     end         //< offset is relative to end of stream
                 };
+
+                float offset;   //< offset into stream in seconds
+                whence rel;     //< specifies how offset is interpreted
+
                 SeekMessage(float offset = 0, whence = start);
-                bool operator== (const SeekMessage &rhs) const { return offset == rhs.offset && rel == rhs.rel; }
+                inline bool operator== (const SeekMessage &rhs) const { return offset == rhs.offset && rel == rhs.rel; }
 
                 friend std::ostream& operator<< (std::ostream& o, const SeekMessage& m);
 
@@ -32,19 +36,7 @@ namespace watcher {
                 friend class boost::serialization::access;
                 template <typename Archive> void serialize(Archive& ar, const unsigned int version);
                 DECLARE_LOGGER();
-                float offset;   //< offset into stream in seconds
-                whence rel;     //< specifies how offset is interpreted
         };
-
-        template <typename Archive>
-        void SeekMessage::serialize(Archive& ar, const unsigned int version)
-        {
-            TRACE_ENTER();
-            ar & boost::serialization::base_object<Message>(*this);
-            ar & offset;
-            ar & rel;
-            TRACE_EXIT();
-        }
 
         typedef boost::shared_ptr<SeekMessage> SeekMessagePtr;
     }
