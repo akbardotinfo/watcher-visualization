@@ -35,7 +35,8 @@ namespace watcher {
     ServerConnection::ServerConnection(Watcherd& w, boost::asio::io_service& io_service) :
         Connection(io_service),
         watcher(w),
-        strand_(io_service)
+        strand_(io_service),
+        write_strand_(io_service)
     {
         TRACE_ENTER(); 
         TRACE_EXIT();
@@ -43,7 +44,9 @@ namespace watcher {
 
     ServerConnection::~ServerConnection()
     {
+        TRACE_ENTER();
         watcher.unsubscribe(shared_from_this());
+        TRACE_EXIT();
     }
 
     void ServerConnection::start()
@@ -107,7 +110,8 @@ namespace watcher {
 
             // unsubscribe to event stream, otherwise it will hold a
             // shared_ptr open
-            watcher.unsubscribe(shared_from_this());
+            if (conn_type == gui)
+                watcher.unsubscribe(shared_from_this());
         }
         TRACE_EXIT();
     }
@@ -136,21 +140,7 @@ namespace watcher {
                         /* Client is requesting the live stream of events. */
                         watcher.subscribe(shared_from_this());
                         restart = true; // keep client connection open
-
-                        // GTL THIS NEEDS TO GO ELSEWHERE - JUST TESTING MESSAGE STREAM ---------START----------------
-                        vector<MessagePtr> bogusMessages;
-                        bogusMessages.push_back(LabelMessagePtr(new LabelMessage("This is a test message 1")));
-                        bogusMessages.push_back(LabelMessagePtr(new LabelMessage("This is a test message 2")));
-                        bogusMessages.push_back(LabelMessagePtr(new LabelMessage("This is a test message 3")));
-
-                        LOG_INFO("Sending bogus data back to startMessage sender."); 
-                        sendMessage(bogusMessages);
-                        /*
-                           DataMarshaller::NetworkMarshalBuffers outBuffers;
-                           DataMarshaller::marshalPayload(bogusMessages, outBuffers);
-                           boost::asio::async_write(theSocket, outBuffers,   strand_.wrap( boost::bind( &ServerConnection::handle_write, shared_from_this(), boost::asio::placeholders::error, bogusMessages.front())));
-                           */
-                        // GTL THIS NEEDS TO GO ELSEWHERE - JUST TESTING MESSAGE STREAM ---------END----------------
+                        conn_type = gui;
                     }
                     else if (i->type == STOP_MESSAGE_TYPE)
                     {
@@ -170,15 +160,20 @@ namespace watcher {
                 if (restart)
                     start();
 
-                /* relay feeder message to any client requesting the live stream.
-                 * Warning: currently there is no check to make sure that a client doesn't
-                 * receive a message it just sent.  This should be OK since we are just
-                 * relaying feeder messages only, and the GUIs should not be sending
-                 * them. */
-                vector<MessagePtr> feeder;
-                remove_copy_if(arrivedMessages.begin(), arrivedMessages.end(), back_inserter(feeder), not_feeder_message);
-                if (! feeder.empty())
-                    watcher.sendMessage(feeder);
+                if (conn_type != gui) {
+                    /* relay feeder message to any client requesting the live stream.
+                     * Warning: currently there is no check to make sure that a client doesn't
+                     * receive a message it just sent.  This should be OK since we are just
+                     * relaying feeder messages only, and the GUIs should not be sending
+                     * them. */
+                    vector<MessagePtr> feeder;
+                    remove_copy_if(arrivedMessages.begin(), arrivedMessages.end(), back_inserter(feeder), not_feeder_message);
+                    if (! feeder.empty())
+                    {
+                        LOG_DEBUG("Sending " << feeder.size() << " feeder messages to clients.");
+                        watcher.sendMessage(feeder);
+                    }
+                }
             }
         }
         else
@@ -187,7 +182,8 @@ namespace watcher {
 
             // unsubscribe to event stream, otherwise it will hold a
             // shared_ptr open
-            watcher.unsubscribe(shared_from_this());
+            if (conn_type == gui)
+                watcher.unsubscribe(shared_from_this());
         }
 
         // If an error occurs then no new asynchronous operations are started. This
@@ -209,17 +205,32 @@ namespace watcher {
             bool waitForResponse=false;
             BOOST_FOREACH(MessageHandlerPtr mh, messageHandlers)
             {
+#if 0
+                /* melkins
+                 * The reads and writes to the socket are asynchronous, so
+                 * we should never be waiting for something to be read as
+                 * a result of a write.
+                 */
                 if(waitForResponse) // someone already said they wanted a response, so ignore ret val for others
                     mh->handleMessageSent(message);
                 else
                     waitForResponse=mh->handleMessageSent(message);
+#endif
+                    mh->handleMessageSent(message);
             }
+
+            // melkins
+            // start() calls async_read(), which is not what we want to do here
+            /*
             if(waitForResponse)
                 start(); 
+                */
         }
         else
         {
             LOG_WARN("Error while sending response to client: " << e);
+            if (conn_type == gui)
+                watcher.unsubscribe(shared_from_this());
         }
 
         // No new asynchronous operations are started. This means that all shared_ptr
@@ -239,9 +250,14 @@ namespace watcher {
         TRACE_ENTER();
         DataMarshaller::NetworkMarshalBuffers outBuffers;
         DataMarshaller::marshalPayload(msg, outBuffers);
+
+        /// FIXME melkins 2004-04-19
+        // is it safe to call async_write and async_read from different
+        // threads at the same time?  asio::tcp::socket() is listed at not
+        // shared thread safe
         async_write(theSocket,
                     outBuffers,
-                    strand_.wrap( boost::bind( &ServerConnection::handle_write,
+                    write_strand_.wrap( boost::bind( &ServerConnection::handle_write,
                                                shared_from_this(),
                                                placeholders::error,
                                                msg)));
@@ -254,9 +270,13 @@ namespace watcher {
         TRACE_ENTER();
         DataMarshaller::NetworkMarshalBuffers outBuffers;
         DataMarshaller::marshalPayload(msgs, outBuffers);
+
+        /// FIXME melkins 2004-04-19
+        // is it safe to call async_write and async_read from different
+        // threads at the same time?
         async_write(theSocket,
                     outBuffers,
-                    strand_.wrap( boost::bind( &ServerConnection::handle_write,
+                    write_strand_.wrap( boost::bind( &ServerConnection::handle_write,
                                                shared_from_this(),
                                                placeholders::error,
                                                msgs.front())));
