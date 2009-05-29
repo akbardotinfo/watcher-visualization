@@ -47,7 +47,7 @@ def main(serverName):
         if session.fix.latitude and session.fix.longitude:
             try:
                 # GTL -- need to check the return val here. 
-                retCode=subprocess.call(['gpsMessageTest',
+                retCode=subprocess.call(['sendGPSMessage',
                                          '-x', str(session.fix.latitude), 
                                          '-y', str(session.fix.longitude), 
                                          '-z', str(session.fix.altitude),
