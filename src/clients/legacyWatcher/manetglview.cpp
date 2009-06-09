@@ -782,13 +782,13 @@ void manetGLView::expandDistance()
     manetAdj.scaleZ += 0.1;
 } 
 
-#define TEXT_SCALE 0.08
+#define TEXT_SCALE 0.105996646
 #define TEXT_SCALE_ZOOM_FACTOR 1.05
 #define ARROW_SCALE_ZOOM_FACTOR 1.05
 
 void manetGLView::textZoomReset(void)
 {
-    scaleText= 0.08;
+    scaleText= TEXT_SCALE;
 }
 
 void manetGLView::textZoomIn(void)
@@ -947,7 +947,7 @@ bool manetGLView::loadConfiguration()
 {
     TRACE_ENTER();
 
-    scaleText=0.08;
+    scaleText=TEXT_SCALE;
     scaleLine=1.0;
     monochromeMode = false;
     threeDView = true;
@@ -1046,14 +1046,33 @@ bool manetGLView::loadConfiguration()
     {
         prop=boolVals[i].prop;
         bool boolVal=boolVals[i].def; 
-        if (root.lookupValue(prop, boolVal))
-            *boolVals[i].val=boolVal; 
-        else
+        if (!root.lookupValue(prop, boolVal))
             root.add(prop, libconfig::Setting::TypeBoolean)=boolVal;
+        LOG_DEBUG("Setting " << boolVals[i].prop << " to " << (boolVal?"true":"false")); 
+        *boolVals[i].val=boolVal; 
     }
     emit threeDViewToggled(threeDView);
     emit monochromeToggled(monochromeMode);
     emit backgroundImageToggled(backgroundImage);
+
+    struct 
+    {
+        const char *prop; 
+        char *def; 
+        string *val; 
+    } strVals[] = 
+    {
+        { "statusFontName", "Helvetica", &statusFontName } 
+    }; 
+    for (size_t i=0; i<sizeof(strVals)/sizeof(strVals[0]); i++)
+    {
+        prop=strVals[i].prop;
+        string strVal=strVals[i].def; 
+        if (!root.lookupValue(prop, strVal))
+            root.add(prop, libconfig::Setting::TypeString)=strVal;
+        *strVals[i].val=strVal; 
+        LOG_DEBUG("Setting " << strVals[i].prop << " to " << strVal);
+    }
 
     struct 
     {
@@ -1066,16 +1085,35 @@ bool manetGLView::loadConfiguration()
         { "scaleLine", 1.0, &scaleLine }, 
         { "layerPadding", 1.0, &layerPadding }, 
         { "gpsScale", 80000.0, &gpsScale }, 
-        { "antennaRadius", 200.0, &antennaRadius } 
+        { "antennaRadius", 200.0, &antennaRadius },
     }; 
     for (size_t i=0; i<sizeof(floatVals)/sizeof(floatVals[0]); i++)
     {
         prop=floatVals[i].prop;
         float floatVal=floatVals[i].def; 
-        if (root.lookupValue(prop, floatVal))
-            *floatVals[i].val=floatVal; 
-        else
+        if (!root.lookupValue(prop, floatVal))
             root.add(prop, libconfig::Setting::TypeFloat)=floatVal;
+        *floatVals[i].val=floatVal; 
+        LOG_DEBUG("Setting " << floatVals[i].prop << " to " << floatVal);
+    }
+
+    struct 
+    {
+        const char *prop; 
+        int def; 
+        int *val; 
+    } intVals[] = 
+    {
+        { "statusFontPointSize", 12, &statusFontPointSize } 
+    }; 
+    for (size_t i=0; i<sizeof(intVals)/sizeof(intVals[0]); i++)
+    {
+        prop=intVals[i].prop;
+        int intVal=intVals[i].def; 
+        if (!root.lookupValue(prop, intVal))
+            root.add(prop, libconfig::Setting::TypeInt)=intVal;
+        *intVals[i].val=intVal; 
+        LOG_DEBUG("Setting " << intVals[i].prop << " to " << intVal);
     }
 
     //
@@ -1291,8 +1329,8 @@ void manetGLView::initializeGL()
     glEnable(GL_LIGHT1);
 
     // or use the ambient light model
-    // GLfloat global_ambient[] = { 0.5f, 0.5f, 0.5f, 1.0f };
-    // glLightModelfv(GL_LIGHT_MODEL_AMBIENT, global_ambient);
+    GLfloat global_ambient[] = { 0.5f, 0.5f, 0.5f, 1.0f };
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, global_ambient);
 
     // Diffuse is LIGHT2
     GLfloat diffLight[]= { 0.5, 0.5, 0.5, 1.0f };    
@@ -1469,7 +1507,8 @@ void manetGLView::drawManet(void)
         buf+=string(buff); 
     }
     buf+=posix_time::to_simple_string(now);
-    drawText(-500, -360, 0, scaleText*2.0, const_cast<char*>(buf.c_str()), 1.0);
+    qglColor(QColor("blue")); 
+    renderText(12, height()-12, QString(buf.c_str()), QFont(statusFontName.c_str(), statusFontPointSize)); 
 
     glPopMatrix();
 
@@ -1585,7 +1624,7 @@ void manetGLView::drawEdge(const WatcherGraphEdge &edge, const WatcherGraphNode 
         GLdouble lz=(z1+z2)/2.0; 
         GLdouble a=atan2(x1-x2 , y1-y2);
         GLdouble th=10.0;
-        drawText(lx+sin(a-M_PI_2),ly+cos(a-M_PI_2)*th, lz, scaleText, const_cast<char*>(edge.displayInfo->label.c_str()));
+        renderText(lx+sin(a-M_PI_2),ly+cos(a-M_PI_2)*th, lz, QString(edge.displayInfo->label.c_str())); 
     }
 
     TRACE_EXIT(); 
@@ -1704,7 +1743,7 @@ void manetGLView::drawNodeLabel(const WatcherGraphNode &node)
 
     GLdouble x, y, z; 
     gps2openGLPixels(node.gpsData->dataFormat, node.gpsData->x, node.gpsData->y, node.gpsData->z, x, y, z); 
-    drawText(x, y+6, z+5, scaleText, buf); 
+    renderText(x, y+6, z+5, QString(buf)); 
 
     TRACE_EXIT();
 }
@@ -1746,25 +1785,26 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
     // get everything to line up properly. 
     //
     TRACE_ENTER(); 
+    QFont font(label->fontName.c_str(), (int)label->pointSize); 
+    QFontMetrics metrics(font); 
 
-    GLfloat w=0.0; 
-    GLfloat h=drawTextHeight(const_cast<char*>(label->labelText.c_str()))*scaleText; 
-    GLfloat t=drawTextWidth(const_cast<char*>(label->labelText.c_str()))*scaleText; 
-    if (t>w)
-        w=t;
+    const char *str=label->labelText.c_str(); 
+    GLfloat w=metrics.width(str); 
+    GLfloat h=metrics.height(); 
 
     GLfloat fgColor[]={
-        label->foregroundColor.r, 
-        label->foregroundColor.g, 
-        label->foregroundColor.b, 
-        label->foregroundColor.a
+        label->foregroundColor.r/255.0, 
+        label->foregroundColor.g/255.0, 
+        label->foregroundColor.b/255.0, 
+        label->foregroundColor.a/255.0
     };
     GLfloat bgColor[]={
-        label->backgroundColor.r, 
-        label->backgroundColor.g, 
-        label->backgroundColor.b, 
-        label->backgroundColor.a
+        label->backgroundColor.r/255.0, 
+        label->backgroundColor.g/255.0, 
+        label->backgroundColor.b/255.0, 
+        label->backgroundColor.a/255.0
     };
+
     GLfloat x=inx+6;
     GLfloat y=iny-6;
     // GTL TODO: make the lables stack based on layer ("index").
@@ -1772,7 +1812,6 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
     GLfloat z=inz+0.3+(0.3*1.0);
     static const GLfloat black[]={0.0,0.0,0.0,1.0};
 
-#define TEXT_SCALE 0.08
     GLfloat border_width = 2.0*(scaleText > TEXT_SCALE ? sqrt(scaleText/TEXT_SCALE) : scaleText/TEXT_SCALE);
     GLfloat border_width2 = border_width + border_width;
     h+=border_width2;
@@ -1797,8 +1836,6 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
     glVertex3f(x,y-h,z+0.2);
     glEnd();
 
-    GLfloat localh=drawTextHeight(const_cast<char*>(label->labelText.c_str()))*scaleText; 
-
     if (monochromeMode)
         for (unsigned int i=0; i<sizeof(bgColor)/sizeof(bgColor[0]); i++)
             bgColor[i]=1.0;
@@ -1810,8 +1847,8 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
     glBegin(GL_POLYGON);
     glVertex3f(x  ,y,z+0.1);
     glVertex3f(x+w,y,z+0.1);
-    glVertex3f(x+w,y-localh-0.5,z+0.1);
-    glVertex3f(x  ,y-localh-0.5,z+0.1);
+    glVertex3f(x+w,y-h-0.5,z+0.1);
+    glVertex3f(x  ,y-h-0.5,z+0.1);
     glEnd();
 
     if (monochromeMode)
@@ -1827,8 +1864,8 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
 
     glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, fgColor);
     y-=drawTextHeight("X")*scaleText;
-    drawText(x+border_width,y-border_width,z+0.2, scaleText, const_cast<char*>(label->labelText.c_str())); 
-    y-=localh-drawTextHeight("X")*scaleText;
+    renderText(x+border_width, y-border_width,z+0.2, QString(label->labelText.c_str()),  font);
+    y-=h-metrics.xHeight()*scaleText;
 
     /* Fill in gap at the bottom of the label...  */
     glMaterialfv(GL_FRONT, GL_AMBIENT_AND_DIFFUSE, bgColor);
@@ -2749,10 +2786,32 @@ void manetGLView::saveConfiguration()
         { "scaleLine", &scaleLine }, 
         { "layerPadding", &layerPadding }, 
         { "gpsScale", &gpsScale }, 
-        { "antennaRadius", &antennaRadius } 
+        { "antennaRadius", &antennaRadius }
     }; 
     for (size_t i=0; i<sizeof(floatVals)/sizeof(floatVals[0]); i++)
         root[floatVals[i].prop]=*floatVals[i].val;
+
+    struct 
+    {
+        const char *prop; 
+        string *val; 
+    } strVals[] = 
+    {
+        { "statusFontName", &statusFontName } 
+    }; 
+    for (size_t i=0; i<sizeof(strVals)/sizeof(strVals[0]); i++)
+        root[strVals[i].prop]=*strVals[i].val;
+
+    struct 
+    {
+        const char *prop; 
+        int *val; 
+    } intVals[] = 
+    {
+        { "statusFontPointSize", &statusFontPointSize } 
+    }; 
+    for (size_t i=0; i<sizeof(intVals)/sizeof(intVals[0]); i++)
+        root[intVals[i].prop]=*intVals[i].val;
 
     root["viewPoint"]["angle"][0]=manetAdj.angleX;
     root["viewPoint"]["angle"][1]=manetAdj.angleY;
