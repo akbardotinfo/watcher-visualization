@@ -93,7 +93,7 @@ int main(int argc, char **argv)
             case 'p': logProps=optarg; break;
             case 't': fontSize=lexical_cast<unsigned int>(optarg); break;
             case 'f': { bool val=fg.fromString(optarg); if (!val) { printf("\nBad argument for fg color\n\n"); usage(argv[0]); } break; }
-            case 'g': { bool val=bg.fromString(optarg); if (!val) { printf("\nBad argument for bg color\n\n"); usage(argv[0]); } break; }
+            case 'b': { bool val=bg.fromString(optarg); if (!val) { printf("\nBad argument for bg color\n\n"); usage(argv[0]); } break; }
             case 'e': expiration=lexical_cast<uint32_t>(optarg); break;
             case 'n': 
                       {
@@ -112,7 +112,7 @@ int main(int argc, char **argv)
             case 'y': lng=lexical_cast<float>(optarg); break; // GTL should try{}catch{} here for invalid values.
             case 'z': alt=lexical_cast<float>(optarg); break; // GTL should try{}catch{} here for invalid values.
             case 'r': remove=true; break;
-            case 'L': label=optarg; break;
+            case 'L': layer=optarg; break;
             case 'h':
             case 'H':
             case '?':
