@@ -6,8 +6,10 @@
 #include <boost/utility.hpp>
 #include <boost/thread.hpp>
 
-#include "messageHandler.h"
-#include "dataRequestMessage.h"
+#include "libwatcher/message_fwd.h"
+
+#include "watcherd_fwd.h"
+#include "serverMessageHandler.h"
 #include "server.h"
 #include "libconfig.h++"
 #include "logger.h"
@@ -15,7 +17,6 @@
 namespace watcher
 {
     class Watcherd : 
-        public MessageHandler,
         public boost::enable_shared_from_this<Watcherd>  
     //     public boost::noncopyable, 
     {
@@ -26,11 +27,17 @@ namespace watcher
 
             void run(const std::string &address, const std::string &port, const int &threadNum);
 
-            void handleMessageArrive(const MessagePtr message); 
-            ConnectionCommand produceReply(const MessagePtr &request, MessagePtr &reply);
-            ConnectionCommand handleReply(const MessagePtr &request, const MessagePtr &reply);
-            ConnectionCommand produceRequest(MessagePtr &request);
+            /** Subscribe a ServerConnection to the event stream. */
+            void subscribe(ServerConnectionPtr);
 
+            /** Unsubscribe a ServerConnection to the event stream. */
+            void unsubscribe(ServerConnectionPtr);
+
+            /** Post an event to all listening clients */
+            void sendMessage(event::MessagePtr);
+            void sendMessage(const std::vector<event::MessagePtr>&);
+
+            libconfig::Config& config() { return config_; }
         protected:
 
         private:
@@ -39,13 +46,15 @@ namespace watcher
 
             ServerPtr serverConnection;
             boost::thread connectionThread;
-            libconfig::Config &config;
+            libconfig::Config &config_;
+
+            ServerMessageHandlerPtr serverMessageHandlerPtr;
 
             // List of clients subscribed to messages.
-            typedef std::list<DataRequestMessagePtr> MessageRequesters;
-            MessageRequesters messageRequesters;
+            typedef std::list<ServerConnectionPtr> MessageRequestors;
+            MessageRequestors messageRequestors;
+            pthread_rwlock_t messageRequestorsLock;
     };
-
 }
 
 #endif // WATCHERD_H

@@ -8,6 +8,7 @@
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 // Modified by Geoff Lawler, SPARTA inc.
+//
 
 #include "server.h"
 #include <boost/thread.hpp>
@@ -20,17 +21,20 @@ using namespace watcher;
 INIT_LOGGER(watcher::Server, "Server");
 
 Server::Server(
+               Watcherd& w,
         const std::string& address, 
         const std::string& port, 
         std::size_t thread_pool_size,
         MessageHandlerPtr messageHandler_) :
+    watcher(w),
     thread_pool_size_(thread_pool_size),
     acceptor_(io_service_),
     messageHandler(messageHandler_)
 {
     TRACE_ENTER();
 
-    new_connection_=ServerConnectionPtr(new ServerConnection(io_service_, messageHandler));
+    new_connection_=ServerConnectionPtr(new ServerConnection(watcher, io_service_));
+    new_connection_->addMessageHandler(messageHandler);
 
     // Open the acceptor with the option to reuse the address (i.e. SO_REUSEADDR).
     boost::asio::ip::tcp::resolver resolver(io_service_);
@@ -43,7 +47,7 @@ Server::Server(
     acceptor_.listen();
 
     acceptor_.async_accept(
-            new_connection_->socket(),
+            new_connection_->getSocket(),
             boost::bind(
                 &Server::handle_accept, 
                 this, 
@@ -82,10 +86,10 @@ void Server::handle_accept(const boost::system::error_code& e)
     TRACE_ENTER();
     if (!e)
     {
-        new_connection_->start();
-        new_connection_.reset(new ServerConnection(io_service_, messageHandler));
+       new_connection_->run();
+        new_connection_.reset(new ServerConnection(watcher, io_service_));
         acceptor_.async_accept(
-                new_connection_->socket(),
+                new_connection_->getSocket(),
                 boost::bind(
                     &Server::handle_accept, 
                     this,

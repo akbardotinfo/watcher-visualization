@@ -15,69 +15,89 @@
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
-#include <boost/noncopyable.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/enable_shared_from_this.hpp>
-#include "messageHandlerFactory.h"
 
-#include "dataMarshaller.h"
-#include "message.h"
+#include "libwatcher/message.h"
+#include "libwatcher/connection.h"
+#include "libwatcher/dataMarshaller.h"
+
+#include "watcherd_fwd.h"
+#include "serverConnectionFwd.h"
 
 namespace watcher 
 {
+    class ReplayState; //fwd decl
+
     /// Represents a single connection from a client.
     class ServerConnection : 
-        public boost::enable_shared_from_this<ServerConnection>, 
-        private boost::noncopyable
+        public Connection,
+        public boost::enable_shared_from_this<ServerConnection> 
     {
         public:
             /// Construct a connection with the given io_service.
-            explicit ServerConnection(boost::asio::io_service& io_service, MessageHandlerPtr messageHandler_);
-
-            /// Get the socket associated with the connection.
-            boost::asio::ip::tcp::socket& socket();
+            explicit ServerConnection(Watcherd&, boost::asio::io_service& io_service);
+            ~ServerConnection();
 
             /// Start the first asynchronous operation for the ServerConnection.
-            void start();
+            void run();
+
+            /// Send a message(s) to this client
+            void sendMessage(event::MessagePtr);
+            void sendMessage(const std::vector<event::MessagePtr>&);
+
+            /// get the io_service associated with this connection
+            boost::asio::io_service& io_service() { return io_service_; }
+
+            /** Get the Watcherd instance associated with this connection. */
+            Watcherd& watcherd() { return watcher; }
 
         private:
+
             DECLARE_LOGGER();
 
             /// Handle completion of a read operation.
-            void handle_read_header(const boost::system::error_code& e, std::size_t bytes_transferred);
-            void handle_read_payload(const boost::system::error_code& e, std::size_t bytes_transferred);
+            void handle_read_header(
+                    const boost::system::error_code& e, 
+                    std::size_t bytes_transferred);
+
+            void handle_read_payload(
+                    const boost::system::error_code& e, 
+                    std::size_t bytes_transferred, 
+                    unsigned short messageNum); 
 
             /// Handle completion of a write operation.
-            void handle_write(const boost::system::error_code& e, MessagePtr reply);
+            void handle_write(const boost::system::error_code& e, event::MessagePtr reply);
+
+            void read_error(const boost::system::error_code &e);
+
+            bool dispatch_gui_event(event::MessagePtr &);
+            void seek(event::MessagePtr& m);
+            void start(event::MessagePtr& m);
+            void stop(event::MessagePtr& m);
+            void speed(event::MessagePtr& m);
+
+            Watcherd& watcher;
+            boost::asio::io_service& io_service_;
 
             /// Strand to ensure the connection's handlers are not called concurrently.
             boost::asio::io_service::strand strand_;
-
-            /// Socket for the connection.
-            boost::asio::ip::tcp::socket socket_;
+            /// Strand for write operations
+            boost::asio::io_service::strand write_strand_;
 
             /// Buffer for incoming data.
             typedef boost::array<char, 8192> IncomingBuffer;
             IncomingBuffer incomingBuffer;
 
-            /// Buffer for outgoing data
-            typedef std::vector<boost::asio::const_buffer> OutboundDataBuffers;
-            typedef boost::shared_ptr<OutboundDataBuffers> OutboundDataBuffersPtr;
-            OutboundDataBuffers outboundDataBuffers;
+            /// What type of connection is this?
+            enum connection_type { unknown, feeder, gui };
+            connection_type conn_type;
 
-            // The incoming messages.
-            MessagePtr request;
-
-            /// The replies to be sent back to the client.
-            std::list<MessagePtr> replies;
-
-            // Use the utiliity class for arbitrary marshal/unmarhasl
-            DataMarshaller dataMarshaller;
-
-            MessageHandlerPtr messageHandler;
+            /// state variables for Live and Replay tracking
+            bool isPlaying_;
+            bool isLive_;
+            boost::shared_ptr<ReplayState> replay;
     };
-
-    typedef boost::shared_ptr<ServerConnection> ServerConnectionPtr;
 
 } // namespace http
 

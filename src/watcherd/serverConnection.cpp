@@ -1,232 +1,426 @@
 #include "serverConnection.h"
 #include <vector>
 #include <boost/bind.hpp>
-#include "messageHandlerFactory.h"
+#include <boost/foreach.hpp>
 
-#include <boost/archive/polymorphic_text_iarchive.hpp>
-#include <boost/archive/polymorphic_text_oarchive.hpp>
-#include <boost/archive/polymorphic_binary_iarchive.hpp>
-#include <boost/archive/polymorphic_binary_oarchive.hpp>
+#include <libwatcher/message.h>
+#include <libwatcher/messageStatus.h>
+#include <libwatcher/seekWatcherMessage.h>
+#include <libwatcher/speedWatcherMessage.h>
+#include <libwatcher/nodeStatusMessage.h>
 
-#include <boost/serialization/shared_ptr.hpp>
-#include <boost/serialization/vector.hpp>
+#include "watcherd.h"
+#include "writeDBMessageHandler.h"
+#include "watcherdConfig.h"
+#include "replayState.h"
 
-#include "message.h"
-#include "messageStatus.h"
+using namespace std; 
+using namespace boost::asio;
 
-#include "dataMarshaller.h"
+namespace {
+    using namespace watcher::event;
 
-using namespace watcher;
-
-INIT_LOGGER(ServerConnection, "ServerConnection");
-
-ServerConnection::ServerConnection(boost::asio::io_service& io_service, MessageHandlerPtr messageHandler_) :
-    strand_(io_service),
-    socket_(io_service),
-    messageHandler(messageHandler_)
-{
-    TRACE_ENTER(); 
-
-    request=MessagePtr(new Message);
-
-    TRACE_EXIT();
-}
-
-boost::asio::ip::tcp::socket& ServerConnection::socket()
-{
-    TRACE_ENTER(); 
-    TRACE_EXIT();
-    return socket_;
-}
-
-void ServerConnection::start()
-{
-    TRACE_ENTER(); 
-    boost::asio::async_read(
-            socket_, 
-            boost::asio::buffer(incomingBuffer, DataMarshaller::header_length),
-            strand_.wrap(
-                boost::bind(
-                    &ServerConnection::handle_read_header, 
-                    shared_from_this(),
-                    boost::asio::placeholders::error,
-                    boost::asio::placeholders::bytes_transferred)));
-    TRACE_EXIT();
-}
-
-void ServerConnection::handle_read_header(const boost::system::error_code& e, std::size_t bytes_transferred)
-{
-    TRACE_ENTER(); 
-    if (!e)
+    /* Grr, because there is no std::copy_if have to use the negation with
+     * remove_copy_if() */
+    bool not_feeder_message(const MessagePtr& m)
     {
-        LOG_DEBUG("Read " << bytes_transferred << " bytes."); 
-
-        boost::logic::tribool result;
-        size_t payloadSize;
-
-        if (!dataMarshaller.unmarshalHeader(incomingBuffer.begin(), bytes_transferred, payloadSize))
-        {
-            LOG_ERROR("Error parsing incoming message header.");
-        }
-        else
-        {
-            LOG_DEBUG("Reading message payload of " << payloadSize << " bytes.");
-            boost::asio::async_read(
-                    socket_, 
-                    boost::asio::buffer(incomingBuffer, payloadSize), 
-                    strand_.wrap(
-                        boost::bind(
-                            &ServerConnection::handle_read_payload,
-                            shared_from_this(),
-                            boost::asio::placeholders::error,
-                            boost::asio::placeholders::bytes_transferred)));
-        }
+        return !isFeederEvent(m->type);
     }
-    else
+}
+
+namespace watcher {
+    using namespace event;
+
+    INIT_LOGGER(ServerConnection, "Connection.ServerConnection");
+
+    ServerConnection::ServerConnection(Watcherd& w, boost::asio::io_service& io_service) :
+        Connection(io_service),
+        watcher(w),
+        io_service_(io_service),
+        strand_(io_service),
+        write_strand_(io_service),
+        conn_type(unknown),
+        isPlaying_(false), isLive_(true)
     {
-        if (e==boost::asio::error::eof)
+        TRACE_ENTER(); 
+        TRACE_EXIT();
+    }
+
+    ServerConnection::~ServerConnection()
+    {
+        TRACE_ENTER();
+        //shared_from_this() not allowed in destructor
+        //watcher.unsubscribe(shared_from_this());
+        TRACE_EXIT();
+    }
+
+    /** Initialization point for start of new ServerConnection thread. */
+    void ServerConnection::run()
+    {
+        TRACE_ENTER(); 
+        boost::asio::async_read(
+                theSocket, 
+                boost::asio::buffer(incomingBuffer, DataMarshaller::header_length),
+                strand_.wrap(
+                    boost::bind(
+                        &ServerConnection::handle_read_header, 
+                        shared_from_this(),
+                        boost::asio::placeholders::error,
+                        boost::asio::placeholders::bytes_transferred)));
+        TRACE_EXIT();
+    }
+
+    void ServerConnection::read_error(const boost::system::error_code &e)
+    {
+        TRACE_ENTER();
+
+        if (e == boost::asio::error::eof)
         {
+            LOG_DEBUG("Received empty message from client or client closed connection.");
             LOG_INFO("Connection to client closed."); 
+
         }
         else
         {
             LOG_ERROR("Error reading socket: " << e.message());
         }
+
+        // unsubscribe to event stream, otherwise it will hold a
+        // shared_ptr open
+        if (conn_type == gui)
+            watcher.unsubscribe(shared_from_this());
+
+        TRACE_EXIT();
     }
-    TRACE_EXIT();
-}
 
-void ServerConnection::handle_read_payload(const boost::system::error_code& e, std::size_t bytes_transferred)
-{
-    TRACE_ENTER();
-
-    if (!e)
+    void ServerConnection::handle_read_header(const boost::system::error_code& e, size_t bytes_transferred)
     {
-        if (dataMarshaller.unmarshalPayload(request, incomingBuffer.begin(), bytes_transferred))
+        TRACE_ENTER(); 
+        if (!e)
         {
-            boost::asio::ip::address nodeAddr(socket_.remote_endpoint().address()); 
+            LOG_DEBUG("Read " << bytes_transferred << " bytes."); 
 
-            LOG_INFO("Recvd message from " << nodeAddr <<  " :" << *request); 
-
-            MessageHandlerPtr handler;
-            if (!messageHandler)
-                handler = MessageHandlerFactory::getMessageHandler(request->type);
-            else
-                handler=messageHandler;
-
-            handler->handleMessageArrive(request);
-
-            MessagePtr reply;
-            MessageHandler::ConnectionCommand cmd = handler->produceReply(request, reply);
-
-            switch(cmd)
+            size_t payloadSize;
+            unsigned short numOfMessages;
+            if (!DataMarshaller::unmarshalHeader(incomingBuffer.begin(), bytes_transferred, payloadSize, numOfMessages))
             {
-                case MessageHandler::writeMessage:
-                    {
-                        // Keep track of this reply in case of write error
-                        // and so we know when to stop sending replays and we can 
-                        // close the socket to the client.
-                        replies.push_back(reply); 
+                LOG_ERROR("Error parsing incoming message header.");
 
-                        LOG_DEBUG("Marshalling outbound message"); 
-                        OutboundDataBuffersPtr obDataPtr=OutboundDataBuffersPtr(new OutboundDataBuffers);
-                        dataMarshaller.marshal(reply, *obDataPtr);
-                        LOG_INFO("Sending reply: " << *reply);
-                        boost::asio::async_write(socket_, *obDataPtr, 
-                                strand_.wrap(
-                                    boost::bind(
-                                        &ServerConnection::handle_write, 
-                                        shared_from_this(),
-                                        boost::asio::placeholders::error, 
-                                        reply))); 
-                        break;
-                    }
-                case MessageHandler::readMessage:
-                    {
-                        LOG_DEBUG("Readig another message via the connection");
-                        start();
-                        break;
-                    }
-                case MessageHandler::closeConnection:
-                    {
-                        LOG_INFO("Not sending reply - request doesn't need one"); 
-                        // This execution branch causes this connection to disapear.
-                        break;
-                    }
-                case MessageHandler::stayConnected:
-                    {
-                        LOG_INFO("We are supposed to stay connected.\n"); 
-                        break;
-                    }
+                if (conn_type == gui)
+                    watcher.unsubscribe(shared_from_this());
+            }
+            else
+            {
+                LOG_DEBUG("Reading packet payload of " << payloadSize << " bytes.");
+
+                boost::asio::async_read(
+                        theSocket, 
+                        boost::asio::buffer(
+                            incomingBuffer, 
+                            payloadSize),  // Should incoming buffer be new'd()? 
+                        strand_.wrap(
+                            boost::bind(
+                                &ServerConnection::handle_read_payload,
+                                shared_from_this(),
+                                boost::asio::placeholders::error,
+                                boost::asio::placeholders::bytes_transferred, 
+                                numOfMessages)));
             }
         }
         else
-        {
-            LOG_WARN("Did not understand incoming message. Sending back a nack");
-            MessagePtr reply=MessagePtr(new MessageStatus(MessageStatus::status_nack));
-            OutboundDataBuffersPtr obDataPtr=OutboundDataBuffersPtr(new OutboundDataBuffers);
-            dataMarshaller.marshal(reply, *obDataPtr);
-            LOG_INFO("Sending NACK as reply: " << *reply);
-
-            replies.push_back(reply);
-            boost::asio::async_write(socket_, *obDataPtr,
-                    strand_.wrap(
-                        boost::bind(&ServerConnection::handle_write, shared_from_this(),
-                            boost::asio::placeholders::error, reply)));
-        }
+            read_error(e);
+        TRACE_EXIT();
     }
 
-    // If an error occurs then no new asynchronous operations are started. This
-    // means that all shared_ptr references to the ServerConnection object will
-    // disappear and the object will be destroyed automatically after this
-    // handler returns. The ServerConnection class's destructor closes the socket.
-
-    TRACE_EXIT();
-}
-
-void ServerConnection::handle_write(const boost::system::error_code& e, MessagePtr message)
-{
-    TRACE_ENTER(); 
-
-    if (!e)
+    void ServerConnection::seek(event::MessagePtr& m)
     {
-        replies.remove(message);
+        TRACE_ENTER();
+        SeekMessagePtr p = boost::dynamic_pointer_cast<SeekMessage>(m);
+        if (p) {
+            if (p->offset == SeekMessage::eof) {
+                if (isLive_) {
+                    // nothing to do
+                } else if (replay->speed() >= 0) {
+                    // switch to live stream
+                    isLive_ = true;
+                    replay->pause();
+                    if (isPlaying_)
+                        watcher.subscribe(shared_from_this());
+                } else {
+                    replay->seek( SeekMessage::eof );
+                }
+            } else {
+                replay->seek(p->offset);
 
-        if (replies.empty())
+                // when switching from live to replay while playing, kick off the replay strand
+                if (isLive_ && isPlaying_)
+                    replay->run();
+                isLive_ = false;
+            }
+        } else {
+            LOG_WARN("unable to dynamic_pointer_cast to SeekMessage!");
+        }
+        TRACE_EXIT();
+    }
+
+    void ServerConnection::start(event::MessagePtr&)
+    {
+        TRACE_ENTER();
+        if (!isPlaying_) {
+            isPlaying_ = true;
+            if (isLive_)
+                watcher.subscribe(shared_from_this());
+            else
+                replay->run();
+        }
+        TRACE_EXIT();
+    }
+
+    void ServerConnection::stop(event::MessagePtr&)
+    {
+        TRACE_ENTER();
+        if (isPlaying_) {
+            if (isLive_)
+                watcher.unsubscribe(shared_from_this());
+            else
+                replay->pause();
+            isPlaying_ = false;
+        }
+        TRACE_EXIT();
+    }
+
+    void ServerConnection::speed(event::MessagePtr& m)
+    {
+        TRACE_ENTER();
+        SpeedMessagePtr p = boost::dynamic_pointer_cast<SpeedMessage>(m);
+        if (p) {
+            if (isLive_ && p->speed >= 1.0f) {
+                // ignore, can't predict the future
+            } else {
+                replay->speed(p->speed);
+                if (isLive_) {
+                    isLive_ = false;
+                    /* when transitioning from live playback, automatically
+                     * seek to the end of the database.
+                     */
+                    replay->seek( SeekMessage::eof );
+                    if (isPlaying_)
+                        replay->run();
+                }
+            }
+        } else {
+            LOG_WARN("unable to dynamic_pointer_cast to SpeedMessage!");
+        }
+        TRACE_EXIT();
+    }
+
+    bool ServerConnection::dispatch_gui_event(MessagePtr& m)
+    {
+        static const struct {
+            MessageType type;
+            void (ServerConnection::*fn)(event::MessagePtr&);
+        } dispatch[] = {
+            { START_MESSAGE_TYPE, &ServerConnection::start },
+            { STOP_MESSAGE_TYPE, &ServerConnection::stop },
+            { SEEK_MESSAGE_TYPE, &ServerConnection::seek },
+            { SPEED_MESSAGE_TYPE, &ServerConnection::speed },
+            { UNKNOWN_MESSAGE_TYPE, 0 }
+        };
+
+        TRACE_ENTER();
+
+        for (size_t i = 0; dispatch[i].type != UNKNOWN_MESSAGE_TYPE; ++i) {
+            if (m->type == dispatch[i].type) {
+                if (conn_type == unknown) {
+                    conn_type = gui;
+                    replay.reset(new ReplayState(shared_from_this()));
+                }
+                (this->*(dispatch[i].fn)) (m);
+                TRACE_EXIT_RET_BOOL(true);
+                return true;
+            }
+        }
+        TRACE_EXIT_RET_BOOL(false);
+        return false;
+    }
+
+    void ServerConnection::handle_read_payload(const boost::system::error_code& e, size_t bytes_transferred, unsigned short numOfMessages)
+    {
+        TRACE_ENTER();
+
+        if (!e)
         {
-            // Initiate graceful connection closure.
-            // LOG_DEBUG("Connection with client completed; Doing graceful shutdown of ServerConnection"); 
-            // boost::system::error_code ignored_ec;
-            // socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ignored_ec);
-            LOG_DEBUG("Restarting connection to client"); 
-            start();
+            vector<MessagePtr> arrivedMessages; 
+            if (DataMarshaller::unmarshalPayload(arrivedMessages, numOfMessages, incomingBuffer.begin(), bytes_transferred))
+            {
+                LOG_INFO("Recvd " << arrivedMessages.size() << " message" <<
+                         (arrivedMessages.size()>1?"s":"") << " from " <<
+                         remoteEndpoint().address()); 
+
+                // Add the incoming address to the Message so everyone
+                // knows who the message came from.
+                boost::asio::ip::tcp::endpoint ep = getSocket().remote_endpoint();
+                BOOST_FOREACH(MessagePtr m, arrivedMessages) {
+                    if(m->fromNodeID==NodeIdentifier())  // is empty
+                        m->fromNodeID=ep.address();
+                }
+
+                /*
+                 * If this connection type is unknown or gui, then traverse the
+                 * list of arrived messages.  For GUI clients, look for the
+                 * STOP_MESSAGE to unsubscribe from the event stream.
+                 *
+                 * For unknown clients, infer the type from the message
+                 * received:
+                 * START_MESSAGE => gui
+                 * isFeederMessage => feeder
+                 */
+                if (conn_type == unknown || conn_type == gui) {
+                    BOOST_FOREACH(MessagePtr& i, arrivedMessages) {
+                        if (dispatch_gui_event(i)) {
+                            //empty
+                       } else if (isFeederEvent(i->type)) {
+                            conn_type = feeder;
+
+                            /*
+                             * This connection is a watcher test daemon.
+                             * Add a message handler to write its event
+                             * stream to the database.
+                             */
+                            addMessageHandler(MessageHandlerPtr(new WriteDBMessageHandler()));
+                        }
+                    }
+                }
+
+                /* Flag indicating whether to continue reading from this
+                 * connection. */
+                bool fail = false;
+
+                BOOST_FOREACH(MessageHandlerPtr& mh, messageHandlers) {
+                    if (mh->handleMessagesArrive(shared_from_this(), arrivedMessages)) {
+                        fail = true;
+                        LOG_DEBUG("Message handler told us to close this connection."); 
+                    }
+                }
+
+                if (!fail) {
+                    // initiate request to read next message
+                    LOG_DEBUG("Waiting for next message.");
+                    run();
+                }
+
+                if (conn_type == feeder) {
+                    /* relay feeder message to any client requesting the live stream.
+                     * Warning: currently there is no check to make sure that a client doesn't
+                     * receive a message it just sent.  This should be OK since we are just
+                     * relaying feeder messages only, and the GUIs should not be sending
+                     * them. */
+                    vector<MessagePtr> feeder;
+                    remove_copy_if(arrivedMessages.begin(), arrivedMessages.end(), back_inserter(feeder), not_feeder_message);
+                    if (! feeder.empty()) {
+                        LOG_DEBUG("Sending " << feeder.size() << " feeder messages to clients.");
+                        watcher.sendMessage(feeder);
+                    }
+                }
+            }
+        }
+        else
+            read_error(e);
+
+        // If an error occurs then no new asynchronous operations are started. This
+        // means that all shared_ptr references to the ServerConnection object will
+        // disappear and the object will be destroyed automatically after this
+        // handler returns. The ServerConnection class's destructor closes the socket.
+
+        TRACE_EXIT();
+    }
+
+    void ServerConnection::handle_write(const boost::system::error_code& e, MessagePtr message)
+    {
+        TRACE_ENTER(); 
+
+        if (!e)
+        {
+            LOG_DEBUG("Successfully sent message to client: " << message); 
+
+            BOOST_FOREACH(MessageHandlerPtr mh, messageHandlers)
+            {
+#if 0
+                /* melkins
+                 * The reads and writes to the socket are asynchronous, so
+                 * we should never be waiting for something to be read as
+                 * a result of a write.
+                 */
+                if(waitForResponse) // someone already said they wanted a response, so ignore ret val for others
+                    mh->handleMessageSent(message);
+                else
+                    waitForResponse=mh->handleMessageSent(message);
+#endif
+                    mh->handleMessageSent(message);
+            }
+
+            // melkins
+            // start() calls async_read(), which is not what we want to do here
+            /*
+            if(waitForResponse)
+                start(); 
+                */
         }
         else
         {
-            LOG_DEBUG("Still more replies to send, sending next one."); 
-            LOG_DEBUG("Marshalling outbound message"); 
-            OutboundDataBuffersPtr obDataPtr=OutboundDataBuffersPtr(new OutboundDataBuffers);
-            dataMarshaller.marshal(replies.front(), *obDataPtr);
-            LOG_DEBUG("Sending reply message: " << *replies.front());
-            boost::asio::async_write(socket_, *obDataPtr, 
-                    strand_.wrap(
-                        boost::bind(
-                            &ServerConnection::handle_write, 
-                            shared_from_this(),
-                            boost::asio::placeholders::error, 
-                            replies.front()))); 
+            LOG_WARN("Error while sending response to client: " << e);
+            if (conn_type == gui)
+                watcher.unsubscribe(shared_from_this());
         }
+
+        // No new asynchronous operations are started. This means that all shared_ptr
+        // references to the connection object will disappear and the object will be
+        // destroyed automatically after this handler returns. The connection class's
+        // destructor closes the socket.
+
+        /* NOTE: The refcount will not go to zero so long as there is an
+         * async_read operation also oustanding. */
+
+        TRACE_EXIT();
     }
-    else
+
+    /** Send a single message to this connected client. */
+    void ServerConnection::sendMessage(MessagePtr msg)
     {
-        LOG_WARN("Error while sending response to client: " << e);
+        TRACE_ENTER();
+        DataMarshaller::NetworkMarshalBuffers outBuffers;
+        DataMarshaller::marshalPayload(msg, outBuffers);
+
+        /// FIXME melkins 2004-04-19
+        // is it safe to call async_write and async_read from different
+        // threads at the same time?  asio::tcp::socket() is listed at not
+        // shared thread safe
+        async_write(theSocket,
+                    outBuffers,
+                    write_strand_.wrap( boost::bind( &ServerConnection::handle_write,
+                                               shared_from_this(),
+                                               placeholders::error,
+                                               msg)));
+        TRACE_EXIT();
     }
 
-    // No new asynchronous operations are started. This means that all shared_ptr
-    // references to the connection object will disappear and the object will be
-    // destroyed automatically after this handler returns. The connection class's
-    // destructor closes the socket.
-    
-    TRACE_EXIT();
-}
+    /** Send a set of messages to this connected client. */
+    void ServerConnection::sendMessage(const std::vector<MessagePtr>& msgs)
+    {
+        TRACE_ENTER();
+        DataMarshaller::NetworkMarshalBuffers outBuffers;
+        DataMarshaller::marshalPayload(msgs, outBuffers);
 
+        /// FIXME melkins 2004-04-19
+        // is it safe to call async_write and async_read from different
+        // threads at the same time?
+        async_write(theSocket,
+                    outBuffers,
+                    write_strand_.wrap( boost::bind( &ServerConnection::handle_write,
+                                               shared_from_this(),
+                                               placeholders::error,
+                                               msgs.front())));
+        TRACE_EXIT();
+    }
+
+}
