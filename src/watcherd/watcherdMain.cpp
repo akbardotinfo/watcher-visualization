@@ -55,14 +55,14 @@ int main(int argc, char* argv[])
         config.getRoot().add("logPropertiesFile", libconfig::Setting::TypeString)=logConf;
     }
 
-    PropertyConfigurator::configureAndWatch(logConf);
+    LOAD_LOG_PROPS(logConf);
 
     LOG_INFO("Logger initialized from file \"" << logConf << "\"");
 
     string address("glory");
     string port("8095");
     size_t numThreads;
-
+    std::string dbPath("event.db");
 
     if (!config.lookupValue("server", address))
     {
@@ -81,11 +81,18 @@ int main(int argc, char* argv[])
     if (!config.lookupValue("serverThreadNum", numThreads))
     {
         LOG_INFO("'serverThreadNum' not found in the configuration file, using default: " << numThreads 
-                << " and adding this to the configuration file.")
+                << " and adding this to the configuration file.");
            config.getRoot().add("serverThreadNum", libconfig::Setting::TypeInt)=static_cast<int>(numThreads);
     }
 
-    boost::shared_ptr<Watcherd> theWatcherDaemon(new Watcherd);
+    if (!config.lookupValue("databasePath", dbPath))
+    {
+        LOG_INFO("'databasePath' not found in the configuration file, using default: " << dbPath
+                << " and adding this to the configuration file.");
+           config.getRoot().add("databasePath", libconfig::Setting::TypeString)=dbPath;
+    }
+
+    WatcherdPtr theWatcherDaemon(new Watcherd);
     try
     {
         theWatcherDaemon->run(address, port, (int)numThreads);
@@ -97,6 +104,7 @@ int main(int argc, char* argv[])
     }
 
     // Save any configuration changes made during the run.
+    LOG_INFO("Saving last known configuration to " << configFilename); 
     SingletonConfig::lock();
     config.writeFile(configFilename.c_str());
 

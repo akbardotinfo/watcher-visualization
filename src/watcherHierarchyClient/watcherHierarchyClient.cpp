@@ -22,6 +22,7 @@
 
 using namespace std;
 using namespace watcher;
+using namespace watcher::event;
 using namespace boost;
 
 /*  Copyright (C) 2004  Networks Associates Technology, Inc.
@@ -47,10 +48,8 @@ typedef struct detector
 /* This is called by the API when this node's position in the hierarchy changes
  * It is defined using the API function idsPositionRegister().
  */
-static void myDetectorPositionUpdate(void *data, IDSPositionType position, IDSPositionStatus status)
+static void myDetectorPositionUpdate(void *, IDSPositionType position, IDSPositionStatus status)
 {
-    detector *st=(detector*)data;
-
     switch(position)
     {
         case COORDINATOR_ROOT: 
@@ -61,6 +60,10 @@ static void myDetectorPositionUpdate(void *data, IDSPositionType position, IDSPo
                 break;
         case COORDINATOR_NEIGHBORHOOD:
             LOG_DEBUG("Position change: regional " << (status==IDSPOSITION_ACTIVE?"active":"inactive")); 
+            break;
+        case COORDINATOR_ROOTGROUP:
+            LOG_DEBUG("Position change: regional " << (status==IDSPOSITION_ACTIVE?"active":"inactive")); 
+            break;
     }
 }
 
@@ -108,6 +111,33 @@ void sendLabelRemove(void *messageHandlerData, const struct MessageInfo *mi)
     TRACE_ENTER();
 }
 
+GUILayer legacyFamilyValue2GUILayer(unsigned int family)
+{
+    TRACE_ENTER();
+    switch (family)
+    {
+        case COMMUNICATIONS_LABEL_FAMILY_UNDEFINED: return UNDEFINED_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_PHYSICAL: return PHYSICAL_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_HIERARCHY: return HIERARCHY_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_BANDWIDTH: return BANDWIDTH_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ROUTING: return ROUTING_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ROUTING_ONEHOP: return ONE_HOP_ROUTING_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ANTENNARADIUS: return ANTENNARADIUS_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_SANITYCHECK: return SANITY_CHECK_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ANOMPATHS: return ANOMPATHS_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_CORRELATION: return CORROLATION_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ALERT: return ALERT_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_CORRELATION_3HOP: return CORROLATION_3HOP_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ROUTING2: return ROUTING2_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_ROUTING2_ONEHOP: return ROUTING2_ONE_HOP_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_FLOATINGGRAPH: return FLOATING_GRAPH_LAYER;
+        case COMMUNICATIONS_LABEL_FAMILY_NORMPATHS: return NORMAL_PATHS_LAYER; 
+        default: return UNDEFINED_LAYER;
+    }
+
+    TRACE_EXIT(); 
+}
+
 void sendEdge(void *messageHandlerData, const struct MessageInfo *mi, bool addEdge)
 {
     TRACE_ENTER();
@@ -128,7 +158,7 @@ void sendEdge(void *messageHandlerData, const struct MessageInfo *mi, bool addEd
     em->node2=boost::asio::ip::address_v4(ne->tail);
     em->edgeColor=Color(ne->color[0], ne->color[1], ne->color[2], ne->color[3]); 
     em->expiration=ne->expiration;
-    em->layer=static_cast<GUILayer>(ne->family); // GTL todo: write a legacy watcher to GUILayer mapping function.
+    em->layer=legacyFamilyValue2GUILayer(ne->family); 
     em->addEdge=addEdge;
 
     // Add any labels if we have them.
@@ -195,9 +225,9 @@ void sendGPS(void *messageHandlerData, const struct MessageInfo *mi)
     watcherGPSUnmarshal(payload, payloadLen, &wGPS);
 
     GPSMessagePtr gpsMessage(new GPSMessage);
-    gpsMessage->lat=wGPS.lat;
-    gpsMessage->lng=wGPS.lon;
-    gpsMessage->alt=wGPS.alt;
+    gpsMessage->x=wGPS.lon;
+    gpsMessage->y=wGPS.lat;
+    gpsMessage->z=wGPS.alt;
 
     st->client->sendMessage(gpsMessage);
 
@@ -228,13 +258,13 @@ void sendWatcherColor(void *messageHandlerData, const struct MessageInfo *mi)
     TRACE_EXIT();
 }
 
-void sendGraph(void *messageHandlerData, const struct MessageInfo * messageInfo) 
+void sendGraph(void *, const struct MessageInfo *) 
 {
     TRACE_ENTER();
     LOG_INFO("Ignoring 3d graph message"); 
     TRACE_EXIT();
 }
-void sendGraphEdge(void *messageHandlerData, const struct MessageInfo * messageInfo) 
+void sendGraphEdge(void *, const struct MessageInfo *) 
 {
     TRACE_ENTER();
     LOG_INFO("Ignoring 3d graph edge message"); 
@@ -250,7 +280,7 @@ void sendFloatinglabel(void *messageHandlerData, const struct MessageInfo *mi, b
 
     FloatingLabel lab;
     char string[260];
-    unsigned char *pos;
+    // unsigned char *pos;
     lab.text = string;
 
     LOG_DEBUG("Received hierarchy floating label message of size " << payloadLen << ", unmarshalling it."); 
@@ -368,7 +398,7 @@ static detector *detectorInit(ManetAddr us, const string &serverName, const char
         { IDSCOMMUNICATIONS_MESSAGE_WATCHER_FLOATINGLABEL_REMOVE, &sendFloatingLabelRemove }
     };
 
-    for (int i = 0; i < sizeof(types)/sizeof(types[0]); i++)
+    for (unsigned int i = 0; i < sizeof(types)/sizeof(types[0]); i++)
         messageHandlerSet(st->cs, direction, position, mode, types[i].type, types[i].messageHandler, st);
 
     return st;
@@ -395,7 +425,7 @@ static void selectLoop(detector *dt)
     fd_set readfds,writefds;
     int maxfd;
     int rc;
-    struct timeval curtime;
+    // struct timeval curtime;
     struct timeval timeout;
     int apifd;
     CommunicationsLogStatePtr cl = communicationsLogStateGet(dt->cs);

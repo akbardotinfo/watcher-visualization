@@ -135,22 +135,24 @@
     <property name="title" >
      <string>&amp;Layers</string>
     </property>
+    <widget class="QMenu" name="menuRouting" >
+     <property name="title" >
+      <string>&amp;Routing</string>
+     </property>
+     <addaction name="actionRoutingOneHop" />
+     <addaction name="actionWormholeRouting" />
+     <addaction name="actionWormholeRoutingOnehop" />
+    </widget>
     <addaction name="actionBandwidth" />
     <addaction name="actionSanityChecks" />
     <addaction name="actionAntennaRadius" />
     <addaction name="actionNeighbors" />
     <addaction name="actionHierarchy" />
-    <addaction name="actionBase" />
-    <addaction name="actionGroup_A" />
-    <addaction name="actionGroup_B" />
-    <addaction name="actionGroup_D" />
-    <addaction name="actionGroup_E" />
-    <addaction name="actionMission" />
-    <addaction name="actionGroup_A_Children" />
-    <addaction name="actionGroup_B_Children" />
-    <addaction name="actionGroup_D_Children" />
-    <addaction name="actionGroup_E_Children" />
-    <addaction name="actionMissionChildren" />
+    <addaction name="menuRouting" />
+    <addaction name="actionAnomPaths" />
+    <addaction name="actionCorrelators" />
+    <addaction name="actionCorrelatorPaths" />
+    <addaction name="actionWormholeAlerts" />
     <addaction name="actionUndefined" />
     <addaction name="actionClearAllLabels" />
     <addaction name="actionClearAllEdges" />
@@ -348,36 +350,36 @@
     <string>&amp;Hierarchy</string>
    </property>
   </action>
-  <action name="actionBase" >
+  <action name="actionRoutingOneHop" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>&amp;Base</string>
+    <string>&amp;One Hop</string>
    </property>
   </action>
-  <action name="actionGroup_A" >
+  <action name="actionWormholeRouting" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Group &amp;A</string>
+    <string>&amp;Wormhole Routing</string>
    </property>
   </action>
-  <action name="actionGroup_B" >
+  <action name="actionWormholeRoutingOnehop" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Group B</string>
+    <string>Wormhole Routing Oneho&amp;p</string>
    </property>
   </action>
-  <action name="actionGroup_D" >
+  <action name="actionAnomPaths" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Group D</string>
+    <string>Ano&amp;m Paths</string>
    </property>
   </action>
   <action name="actionNormPaths" >
@@ -388,60 +390,28 @@
     <string>Normal &amp;Paths</string>
    </property>
   </action>
-  <action name="actionGroup_E" >
+  <action name="actionCorrelators" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Group E</string>
+    <string>&amp;Correlators</string>
    </property>
   </action>
-  <action name="actionMission" >
+  <action name="actionCorrelatorPaths" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Mission</string>
+    <string>Corr&amp;elator Paths</string>
    </property>
   </action>
-  <action name="actionGroup_A_Children" >
+  <action name="actionWormholeAlerts" >
    <property name="checkable" >
     <bool>true</bool>
    </property>
    <property name="text" >
-    <string>Group A Children</string>
-   </property>
-  </action>
-  <action name="actionGroup_B_Children" >
-   <property name="checkable" >
-    <bool>true</bool>
-   </property>
-   <property name="text" >
-    <string>Group B Children</string>
-   </property>
-  </action>
-  <action name="actionGroup_D_Children" >
-   <property name="checkable" >
-    <bool>true</bool>
-   </property>
-   <property name="text" >
-    <string>Group D Children</string>
-   </property>
-  </action>
-  <action name="actionGroup_E_Children" >
-   <property name="checkable" >
-    <bool>true</bool>
-   </property>
-   <property name="text" >
-    <string>Group E Children</string>
-   </property>
-  </action>
-  <action name="actionMissionChildren" >
-   <property name="checkable" >
-    <bool>true</bool>
-   </property>
-   <property name="text" >
-    <string>Mission Children</string>
+    <string>Wormhole A&amp;lerts</string>
    </property>
   </action>
   <action name="actionUndefined" >
@@ -602,10 +572,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionGroup_D</sender>
+   <sender>actionAnomPaths</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupD(bool)</slot>
+   <slot>toggleAnomPaths(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -634,10 +604,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionMission</sender>
+   <sender>actionCorrelatorPaths</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleMission(bool)</slot>
+   <slot>toggleCorrelation3Hop(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -650,10 +620,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionGroup_E</sender>
+   <sender>actionCorrelators</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupE(bool)</slot>
+   <slot>toggleCorrelation(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -682,10 +652,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionBase</sender>
+   <sender>actionRoutingOneHop</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleBase(bool)</slot>
+   <slot>toggleRoutingOnehop(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -730,10 +700,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionGroup_A_Children</sender>
+   <sender>actionWormholeAlerts</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupAChildren(bool)</slot>
+   <slot>toggleAlert(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -746,10 +716,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionGroup_B_Children</sender>
+   <sender>actionWormholeRouting</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupBChildren(bool)</slot>
+   <slot>toggleWormholeRouting(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -762,74 +732,10 @@
    </hints>
   </connection>
   <connection>
-   <sender>actionGroup_D_Children</sender>
+   <sender>actionWormholeRoutingOnehop</sender>
    <signal>toggled(bool)</signal>
    <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupDChildren(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>actionGroup_E_Children</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupEChildren(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>actionMissionChildren</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>manetGLViewWindow</receiver>
-   <slot>toggleMissionChildren(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>actionGroup_A</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupA(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>actionGroup_B</sender>
-   <signal>toggled(bool)</signal>
-   <receiver>manetGLViewWindow</receiver>
-   <slot>toggleGroupB(bool)</slot>
+   <slot>toggleWormholeRoutingOnehop(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
      <x>-1</x>
@@ -859,8 +765,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>groupDToggled(bool)</signal>
-   <receiver>actionGroup_D</receiver>
+   <signal>anomPathsToggled(bool)</signal>
+   <receiver>actionAnomPaths</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -891,8 +797,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>missionToggled(bool)</signal>
-   <receiver>actionMission</receiver>
+   <signal>correlation3HopToggled(bool)</signal>
+   <receiver>actionCorrelatorPaths</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -907,8 +813,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>groupEToggled(bool)</signal>
-   <receiver>actionGroup_E</receiver>
+   <signal>correlationToggled(bool)</signal>
+   <receiver>actionCorrelators</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -955,8 +861,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>baseToggled(bool)</signal>
-   <receiver>actionBase</receiver>
+   <signal>routingOnehopToggled(bool)</signal>
+   <receiver>actionRoutingOneHop</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -1003,8 +909,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>groupAChildrenToggled(bool)</signal>
-   <receiver>actionGroup_A_Children</receiver>
+   <signal>alertToggled(bool)</signal>
+   <receiver>actionWormholeAlerts</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -1019,8 +925,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>groupBChildrenToggled(bool)</signal>
-   <receiver>actionGroup_B_Children</receiver>
+   <signal>wormholeRoutingToggled(bool)</signal>
+   <receiver>actionWormholeRouting</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
@@ -1035,72 +941,8 @@
   </connection>
   <connection>
    <sender>manetGLViewWindow</sender>
-   <signal>groupDChildrenToggled(bool)</signal>
-   <receiver>actionGroup_D_Children</receiver>
-   <slot>setChecked(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>manetGLViewWindow</sender>
-   <signal>groupEChildrenToggled(bool)</signal>
-   <receiver>actionGroup_E_Children</receiver>
-   <slot>setChecked(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>manetGLViewWindow</sender>
-   <signal>missionChildrenToggled(bool)</signal>
-   <receiver>actionMissionChildren</receiver>
-   <slot>setChecked(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>manetGLViewWindow</sender>
-   <signal>groupAToggled(bool)</signal>
-   <receiver>actionGroup_A</receiver>
-   <slot>setChecked(bool)</slot>
-   <hints>
-    <hint type="sourcelabel" >
-     <x>454</x>
-     <y>295</y>
-    </hint>
-    <hint type="destinationlabel" >
-     <x>-1</x>
-     <y>-1</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>manetGLViewWindow</sender>
-   <signal>groupBToggled(bool)</signal>
-   <receiver>actionGroup_B</receiver>
+   <signal>wormholeRoutingOnehopToggled(bool)</signal>
+   <receiver>actionWormholeRoutingOnehop</receiver>
    <slot>setChecked(bool)</slot>
    <hints>
     <hint type="sourcelabel" >
