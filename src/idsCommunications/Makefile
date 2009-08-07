@@ -55,7 +55,7 @@ INCLUDES += -I/usr/local/include/libxml2
 INCLUDES += -I/usr/local/include
 INCLUDES += -I/usr/X11R6/include 
 COMPFLAGS += $(INCLUDES)
-COMPFLAGS += $(shell libnet-config --defines)
+# COMPFLAGS += $(shell libnet-config --defines)
 COMPFLAGS += -g
 COMPFLAGS += -Wall
 COMPFLAGS += -Wextra -Wno-unused-parameter
@@ -135,7 +135,7 @@ LDFLAGS += -L/usr/lib/libxml2
 
 LDFLAGS += -lidmef
 LDFLAGS += -lxml2
-LDFLAGS += $(shell libnet-config --libs)
+# LDFLAGS += $(shell libnet-config --libs)
 LDFLAGS += -lm
 LDFLAGS+=-lpcap
 
@@ -415,6 +415,9 @@ testPacketProtection: ${BASEOBJ}
 # just rebuild the whole thing GTL 
 ../protection/libnnpprotection.a: 
 	$(MAKE) -C ../protection
+
+distclean:
+	$(MAKE) clean
 
 clean:
 	rm -f $(BINS) *.o *.uto *.core core testhello libidsCommunications.a depend;
