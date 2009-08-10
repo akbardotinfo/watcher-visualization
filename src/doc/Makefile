@@ -53,14 +53,18 @@ includes.tex		?= \
 	sendConnectivityMessage.tex \
 	sendGPSMessage.tex \
 	sendDataPointMessage.tex \
-	sendLabelMessage.tex
+	sendLabelMessage.tex \
+	showClock.tex \
+	gpsFeeder.tex \
+	watcherHierarchyClient.tex
 #includes.tex.sh	?=
 #includes.rst		?=
 #includes.fig		?=
 #includes.gpi		?=
 #includes.dot		?=
 #includes.xvg		?=
-#includes.eps.gz	?=
+includes.eps.gz	?= \
+	watcherArch.eps.gz
 #includes.eps		?= 
 #
 # If you list files or wildcards here, they will *not* be cleaned - default is
