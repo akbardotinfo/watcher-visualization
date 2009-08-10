@@ -1,0 +1,147 @@
+\documentclass{article}
+
+\pdfpagewidth 8.5in
+\pdfpageheight 11in
+
+% \setlength\topmargin{0in}
+% \setlength\headheight{0in}
+% \setlength\headsep{0in}
+% \setlength\textheight{7.7in}
+\setlength\textwidth{6.5in}
+\setlength\oddsidemargin{0in}
+\setlength\evensidemargin{0in}
+% \setlength\parindent{0.25in}
+% \setlength\parskip{0.25in} 
+
+\usepackage{makeidx}
+\makeindex
+\usepackage[dvips]{graphicx}
+
+\usepackage{url}
+
+\pagestyle{headings}
+
+\author{Geoff Lawler \url{<geoff.lawler@cobham.com>} \and {Michael Elkins \url{<michael.elkins@cobham.com>}}}
+
+\title{Watcher User's Guide}
+
+\begin{document}
+\maketitle
+\newpage 
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This is the introduction. 
+
+\section{General Watcher Information}
+\subsection{Watcher Architecture and Communications}
+Give info about the watcher arch here: test node connect to daemon. GUIs connect to daemons and request message streams. Explain what message
+streams are. 
+
+\subsection{Obtaining and Building Watcher}
+Mention GPL'd-ness of the watcher. Give reference to repo location. 
+
+Give list of dependencies.
+
+Give simple build instructions: ./autogen.sh, ./configure, make, sudo make install, cd clients/legacyWatcher, make, make install \ldots.
+
+\subsection{Log Property Files}
+Give general intro with examples of the standard format and workings of the log.properties file. (Just like Java if peeps know that.)
+
+\subsection{Configuration (cfg) Files} 
+explain layout of standard config files and arguments that most (all?) watcher modules understand (-f cfg). 
+
+\subsection{Command Line Arguments}
+Most binaries take a {\tt -c} (or {\tt -f}) arugment which gives the location of the {\tt cfg} file. Mention this. Also note that most binaries 
+just take that option and nothing else. 
+
+\section{Test Node Components}
+\subsection{Watcher API}
+Mention watcher messages and give types. Mention something else that's interesting and useful. 
+
+\subsection{Scripting Interface}
+For each watcher message there is a command line binary to send that message. These binaries can be used directly in shell scripts or invoked via a system call from most scripting languages to send 
+an instance of that message to a running watcher daemon instance. Each binary allows the user to specify the content of the message and the daemon instance to send the message to. 
+
+In many cases, the 
+node that the message ``comes from'' can be set as well. This allows a user on any machine that can connect to a watcher daemon, the ability to modify nodes, edges, lables, etc of any 
+test node. This is useful for debugging or real time modification of an aspect of the test bed. For instance a single machine could monitor traffic rates between nodes and update 
+the edges between those nodes with the current traffic rate. 
+\\\\
+The available commands are:
+\begin{itemize}
+\item sendColorMessage (page \pageref{sendColorMessage})
+\item sendEdgeMessage (page \pageref{sendEdgeMessage})
+\end{itemize}
+The following pages give details for each command.
+\include{sendColorMessage}
+\include{sendEdgeMessage}
+
+\section{The Watcher Daemon}
+
+The Watcher Daemon is responsible for collecting events from the Test Nodes and
+sending event streams to the Watcher GUIs.  Events from the Test Nodes are
+stored in an SQLite databased (named "event.db" by default).  The Watcher Daemon
+determines whether a connection is a Test Node or GUI by the type of the first
+event received.
+
+When recording events from the Test Nodes into the database, events are
+appended to the existing database, or a new database is created if it does not
+exist.  The Watcher Daemon may also be invoked in read-only database mode using
+the command line option -r or --read-only, in which case events are not stored
+in the database.  Read-only mode is useful particularly when replaying events
+from a database from some time in the past.  In this case, it may not make
+sense to append any current event stream from the Test Nodes when a large time
+gap exists between past and present runs.
+
+\subsection{Live Mode}
+
+When a GUI connects to the Watcher Daemon, it will by default subscribe to the
+live event stream coming from the Test Nodes.  In this case, the Watcher Daemon
+is simply retransmitting received events to all listening GUIs rather than
+fetching events from the database.  The events are also stored in the database
+for later replay.
+
+If a GUI pauses, rewinds, or slows playback, it will switch to Playback mode.
+
+\subsection{Playback Mode}
+
+In Playback Mode, the Watcher Daemon fetches events from the database and sends
+them to the GUI.  Each GUI connection has an independent notion of the current
+playback time offset, direction and speed.  Stopping playback in one GUI will
+not cause playback to stop in another GUI.
+
+The Watcher Daemon will automatically pause Playback when the last event from
+the database has been sent to the GUI.  Thus, if a GUI were playing at a time
+offset near the end of the database, and faster than real time, the GUI will be
+paused when the last event is sent, even if additional events arrive from Test
+Nodes.
+
+\section{Watcher GUIs}
+
+Talk about GUIs here. Legacy watcher is OpenGL, others are engine based and just barely started proof of concept.
+
+\subsection{Legacy Watcher}
+\begin{figure}
+\centering
+\includegraphics[width=0.8\textwidth]{legWatcherGUI.eps}
+\caption{The legacy watcher showing a running instance of showClock.}
+\end{figure}
+
+\subsection{ogreWatcher}
+\begin{figure}
+\centering
+\includegraphics[width=0.8\textwidth]{ogreWatcherGUI.eps}
+\caption{The ogreWatcher showing a running instance of showClock.}
+\end{figure}
+
+Built with watcher.
+\subsubsection{Watcher3d}
+Built with Delta-3d.
+
+\printindex
+
+\end{document}
