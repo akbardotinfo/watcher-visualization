@@ -1,0 +1,118 @@
+#
+# This gives the location of the watcher log properties configuration file.
+# This file tells the watcher where, and how much to log. 
+#
+logProperties = "watcher.log.properties";
+
+#
+# Various settings. Toggle the appropriate entries in the 'view' menu.
+#
+nodes3d = true;
+monochrome = false;
+
+#
+# If a layers:entry is true, that layer will be active at watcher startup.
+#
+layers : 
+{
+  bandwidth = false;
+  undefined = false;
+  neighbors = false;
+  hierarchy = false;
+  routing = false;
+  routingOneHop = true;
+  antennaRadius = false;
+  sanityCheck = false;
+  anomPaths = false;
+  correlation = false;
+  alert = false;
+  correlation3Hop = false;
+  wormholeRouting = false;
+  wormholeRoutingOnehop = false;
+  normPaths = false;
+};
+
+#
+# Background image properties:
+#   'imageFile' is the full path to the image file to be used. BMP and PPM supported. 
+#
+#   'coordinates' is a 5 tuple that describes both locatation and size of the image. The 
+#           items are (in order): x value, image width, y value, image height, z value
+#           For example, 0.0, 400.0, 0.0, 600.0, -20 would have an image starting at 0,0 and going 
+#           400 to the right and 600 up. -100, 100, -200, 200, -10 would have the image centered
+#           on the origin with a width of 100 and a height of 200. 
+#           (If the width and the height are 0.0, then the width and height of the image itself is used.)
+#
+backgroundImage : 
+{
+  imageFile = "none";
+  coordinates = [ -20.0, 330.0, -81.0, 319.0, -25.0 ];
+};
+
+#
+# Viewpoint of the watcher. Alignment of the camera with respect to the nodes. 
+#
+viewPoint : 
+{
+  angle = [ 0.0, 0.0, 0.0 ];
+  scale = [ 0.03284049407, 0.03284049407, 0.1000000015 ];
+  shift = [ -143.5, -124.0, 0.0 ];
+};
+
+#
+# watcherProperties describe individual node properties. Each node
+# is indexed by a sub-group 'node_XX_XX_XX_XX', where the XX are the 
+# octets of the node's ip address. (Sorry for the awkwardness of this, but the library
+# I'm using to do the parsing does not allow '.' or labels to start with a number, otherwise
+# I'd just use the ip address.)
+#
+# Within each node's sub-group you can specif 5 things:
+#   'label' - this is the string to label the node with.
+#   'shape' - What shape the node is: 
+#               0 - circle/sphere
+#               1 - square/cube
+#               2 - triangle/pyramid
+#               3 - torus/donut
+#               4 - square/teapot
+#             The shape depends on the '3dnodes' above, if true the node's shape will be the 
+#             second of the choices above.
+#   'spin' - if true, the node will spin. 
+#   'flash' - if true, the node will invert its color every half second or so.
+#   'size' - Sets the node's size relative to the standard size. Is a floating point number.
+#
+watcherProperties : 
+{
+  node_192_168_2_101 : 
+  {
+    label = "1";
+    shape = 0;
+    spin = false;
+    flash = false;
+    size = 1.0;
+  };
+  node_192_168_2_102 : 
+  {
+    label = "2";
+    shape = 0;
+    spin = false;
+    flash = false;
+    size = 1.0;
+  };
+  node_192_168_2_103 : 
+  {
+    label = "3";
+    shape = 0;
+    spin = false;
+    flash = false;
+    size = 1.0;
+  };
+};
+
+#
+# Support for differnt GPS data formats. 
+# Currently supported formats: lat/long/alt and UTM, 
+# and UTM support is spotty and untested. Default is  lat/long/alt
+# which is specified by the string "lat-long-alt-WGS84". 
+#
+#gpsDataFormat="UTM";
+gpsDataFormat="lat-long-alt-WGS84";
