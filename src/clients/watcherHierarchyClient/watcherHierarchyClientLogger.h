@@ -15,40 +15,10 @@
  *     You should have received a copy of the GNU Affero General Public License
  *     along with Watcher.  If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef WHCLOGGER_H
+#define WHCLOGGER_H
 
-/** 
- * @file watcherGPS.h
- * @author Geoff Lawler <geoff.lawler@cobham.com>
- * @date 2009-07-15 
- */
-/* $Id: watcherGPS.h,v 1.4 2007/07/11 03:50:45 dkindred Exp $
- *
- *  Copyright (C) 2006  Sparta Inc.  Written by the NIP group, SRD, ISSO
- */
+#include "logger.h"
+DECLARE_LOGGER();
 
-#ifndef WATCHERGPS_H
-#define WATCHERGPS_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-// GTL - took destime declaration from --> #include "des.h"
-// as I did't want to pull in everything else, when all that was needed
-// was destime.
-typedef long long int destime;
-
-typedef struct WatcherGPS
-{
-	double lat, lon, alt;
-	destime time;
-} WatcherGPS;
-
-WatcherGPS *watcherGPSUnmarshal(const void *payload, int payloadlen, WatcherGPS *);
-int watcherGPSMarshal(void *payload, int payloadlen, const WatcherGPS *gps);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif
+#endif /* WHCLOGGER_H */
