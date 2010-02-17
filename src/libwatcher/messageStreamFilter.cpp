@@ -17,6 +17,12 @@
  */
 
 #include "messageStreamFilter.h"
+#include "message.h"
+#include "labelMessage.h"
+#include "edgeMessage.h"
+#include "connectivityMessage.h"
+#include "colorMessage.h"
+#include "nodePropertiesMessage.h"
 #include "logger.h"
 
 using namespace watcher;
@@ -27,6 +33,13 @@ MessageStreamFilter::MessageStreamFilter() :
             layer(), messageType(0), region()
 {
     TRACE_ENTER();
+    TRACE_EXIT();
+}
+
+MessageStreamFilter::MessageStreamFilter(const MessageStreamFilter &copyme)
+{
+    TRACE_ENTER();
+    *this=copyme;
     TRACE_EXIT();
 }
 
@@ -43,6 +56,58 @@ void MessageStreamFilter::setMessageType(const unsigned int &t) { messageType=t;
 WatcherRegion MessageStreamFilter::getRegion() const { return region; } 
 void MessageStreamFilter::setRegion(const WatcherRegion &r) { region=r; } 
 
+bool MessageStreamFilter::operator==(const MessageStreamFilter &other) const 
+{
+    TRACE_ENTER();
+    bool retVal=
+        layer==other.layer && 
+        messageType==other.messageType && 
+        region==other.region;
+
+    TRACE_EXIT_RET_BOOL(retVal);
+    return retVal;
+}
+
+MessageStreamFilter &MessageStreamFilter::operator=(const MessageStreamFilter &other) 
+{
+    TRACE_ENTER();
+    layer=other.layer;
+    messageType=other.messageType;
+    region=other.region;
+    TRACE_EXIT();
+}
+
+bool MessageStreamFilter::passFilter(const MessagePtr m) const
+{
+    TRACE_ENTER();
+    // Just handle message types and layers for now.
+
+    // Really need to make layers a member of a base class...
+    bool retVal=true;
+    switch (m->type)
+    {
+        case LABEL_MESSAGE_TYPE: 
+            retVal=layer==(boost::dynamic_pointer_cast<LabelMessage>(m))->layer; 
+            break;
+        case EDGE_MESSAGE_TYPE: 
+            retVal=layer==(boost::dynamic_pointer_cast<EdgeMessage>(m))->layer; 
+            break;
+        case COLOR_MESSAGE_TYPE: 
+            retVal=layer==(boost::dynamic_pointer_cast<ColorMessage>(m))->layer; 
+            break;
+        case CONNECTIVITY_MESSAGE_TYPE: 
+            retVal=layer==(boost::dynamic_pointer_cast<ConnectivityMessage>(m))->layer; 
+            break;
+        case NODE_PROPERTIES_MESSAGE_TYPE: 
+            retVal=layer==(boost::dynamic_pointer_cast<NodePropertiesMessage>(m))->layer; 
+            break;
+        default: 
+            break;
+    }
+    TRACE_EXIT_RET_BOOL(retVal);
+    return retVal;
+}
+
 //virtual 
 std::ostream &MessageStreamFilter::toStream(std::ostream &out) const
 {
@@ -55,7 +120,7 @@ std::ostream &MessageStreamFilter::toStream(std::ostream &out) const
 }
 
 
-std::ostream &operator<<(std::ostream &out, const MessageStreamFilter &messStreamFilter)
+std::ostream &watcher::operator<<(std::ostream &out, const MessageStreamFilter &messStreamFilter)
 {
     return messStreamFilter.operator<<(out);
 }

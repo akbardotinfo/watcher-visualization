@@ -50,11 +50,14 @@ HEADERS += \
     manetglview.h \
     skybox.h \
     stringIndexedMenuItem.h \
+    watcherAboutDialog.h \
     watcherGraphDialog.h \
     watcherMainWindow.h \
     watcherScrollingGraphControl.h
 
-FORMS += watcher.ui
+FORMS += \
+    watcher.ui \
+    aboutDialog.ui
 
 SOURCES += \
     backgroundImage.cpp \
@@ -64,6 +67,7 @@ SOURCES += \
     manetglview.cpp \
     skybox.cpp  \
     stringIndexedMenuItem.cpp \
+    watcherAboutDialog.cpp \
     watcherGraphDialog.cpp  \
     watcherMainWindow.cpp   \
     watcherScrollingGraphControl.cpp 

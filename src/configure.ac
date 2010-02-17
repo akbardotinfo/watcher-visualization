@@ -117,7 +117,7 @@ if test x$enable_testnodeonly == xno; then
 	    AC_MSG_RESULT($ac_cv_kml)
 	    KML_INCLUDES="-I$ac_cv_kml/include"
 	    KML_LDFLAGS="-L$ac_cv_kml/lib"
-	    KML_LDADD="-lkmlconvenience -lkmlengine -lkmldom"
+	    KML_LDADD="-lkmlbase -lkmlconvenience -lkmlengine -lkmldom"
 	    AC_SUBST(KML_INCLUDES)
 	    AC_SUBST(KML_LDFLAGS)
 	    AC_SUBST(KML_LDADD)
@@ -209,6 +209,7 @@ AC_CONFIG_FILES([ \
     libwatcher/Makefile \
     libwatcher/watcher.pc \
     libwatcher/watchermsg.pc \
+    util/watcherutils.pc \
     libwatcher/test/Makefile \
     clients/Makefile \
     clients/routeFeeder/Makefile \

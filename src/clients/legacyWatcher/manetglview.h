@@ -27,6 +27,7 @@
 #include <QGLWidget>
 #include <QMenu>
 #include <QSlider>
+#include <QTimer>
 #include <boost/thread/locks.hpp>
 #include "declareLogger.h"
 #include "libwatcher/watcherGraph.h"
@@ -100,7 +101,11 @@ public slots:
         void sliderMovedInGUI(int newVal);
         void sliderPressedInGUI();
 
+        void spawnAboutBox(); 
+
         void saveConfiguration();
+
+        void streamFilteringEnabled(bool isEnabled); 
 
 signals:
         void positionReset();
@@ -129,6 +134,8 @@ signals:
         // Emitted when view->backgroun image should be enabled/disabled.
         void enableBackgroundImage(bool);
 
+        void enableStreamFiltering(bool); 
+
     protected:
         DECLARE_LOGGER();
 
@@ -137,9 +144,6 @@ signals:
 
         void initializeGL();
         void paintGL();
-        // virtual void paintEvent(QPaintEvent *event);
-        // void paintOverlayGL();
-        // void PaintEvent(QPaintEvent *event);
 
         void resizeGL(int width, int height);
         
@@ -150,8 +154,9 @@ signals:
 
         void keyPressEvent(QKeyEvent * event);
 
-
         unsigned int getNodeIdAtCoords(const int x, const int y);
+        void drawStatusString(); 
+        void drawDebugInfo();
 
     private:
 
@@ -177,6 +182,7 @@ signals:
         float streamRate; 
         bool playbackPaused;
         bool autorewind;
+        bool messageStreamFiltering;
         bool sliderPressed;
 
         watcher::event::GPSMessage gpsDataFormat;
@@ -224,6 +230,7 @@ signals:
         bool showPlaybackTimeInStatusString;
         bool showPlaybackRangeString;
         bool showVerboseStatusString;
+        bool showDebugInfo;
 
         float scaleText;
         float scaleLine;
