@@ -1,0 +1,83 @@
+SUBDIRS=. test
+
+include $(top_srcdir)/Makefile.top
+
+lib_LIBRARIES=libwatcher.a
+libwatcher_a_includedir=$(includedir)/libwatcher
+libwatcher_a_include_HEADERS=\
+	client.h \
+	connection_fwd.h \
+	message_fwd.h \
+	messageHandler.h \
+	sendMessageHandler.h \
+	messageStreamFilter.h \
+	watcherTypes.h \
+	watcherGlobalFunctions.h \
+	watcherColors.h \
+	colors.h
+
+lib_LTLIBRARIES=libwatchermsg.la
+libwatchermsg_la_includedir=$(includedir)/libwatcher
+libwatchermsg_la_include_HEADERS=\
+	message.h \
+	colorMessage.h \
+	connectivityMessage.h \
+	dataPointMessage.h \
+	edgeMessage.h \
+	gpsMessage.h \
+	labelMessage.h \
+	messageTypesAndVersions.h \
+	messageStreamFilter.h \
+	messageStreamFilterMessage.h \
+	nodePropertiesMessage.h \
+	nodeStatusMessage.h 
+	
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = watcher.pc watchermsg.pc
+
+libwatchermsg_la_SOURCES=\
+	message.h message.cpp \
+	colorMessage.cpp colorMessage.h \
+	connectivityMessage.cpp connectivityMessage.h \
+	dataPointMessage.cpp dataPointMessage.h \
+	edgeMessage.cpp edgeMessage.h \
+	gpsMessage.cpp gpsMessage.h \
+	labelMessage.cpp labelMessage.h \
+	messageTypesAndVersions.cpp messageTypesAndVersions.h \
+	messageStreamFilterMessage.h messageStreamFilterMessage.cpp \
+	nodePropertiesMessage.cpp nodePropertiesMessage.h \
+	nodeStatusMessage.cpp nodeStatusMessage.h \
+	playbackTimeRange.cpp playbackTimeRange.h \
+	seekWatcherMessage.cpp seekWatcherMessage.h \
+	speedWatcherMessage.cpp speedWatcherMessage.h \
+	startWatcherMessage.cpp startWatcherMessage.h \
+	stopWatcherMessage.cpp stopWatcherMessage.h \
+	testMessage.cpp testMessage.h
+
+libwatcher_a_SOURCES= \
+	client.h client.cpp \
+	clientConnection.h clientConnection.cpp \
+	connection.cpp connection.h \
+	connection_fwd.h \
+	dataMarshaller.h dataMarshaller.cpp \
+	displayInfo.cpp displayInfo.h \
+	edgeDisplayInfo.cpp edgeDisplayInfo.h \
+	labelDisplayInfo.cpp labelDisplayInfo.h \
+	floatingLabelDisplayInfo.cpp floatingLabelDisplayInfo.h \
+	messageHandler.h messageHandlerFwd.h messageHandler.cpp \
+	sendMessageHandler.h \
+	messageStatus.cpp messageStatus.h \
+	messageStream.h messageStream.cpp \
+	messageStreamFilter.h messageStreamFilter.cpp \
+	nodeDisplayInfo.cpp nodeDisplayInfo.h \
+	watcherGlobalFunctions.cpp watcherGlobalFunctions.h \
+	watcherGraph.cpp watcherGraph.h \
+	watcherGraphEdge.cpp watcherGraphEdge.h \
+	watcherGraphNode.cpp watcherGraphNode.h \
+	watcherRegion.h watcherRegion.cpp \
+	watcherdAPIMessageHandler.h watcherdAPIMessageHandler.cpp \
+	watcherTypes.cpp watcherTypes.h \
+	watcherSerialize.h \
+	watcherColors.cpp watcherColors.h \
+	colors.cpp colors.h 
+
