@@ -977,7 +977,11 @@ manetGLView::manetGLView(QWidget *parent) :
 
 manetGLView::~manetGLView()
 {
-    TRACE_ENTER();
+    shutdown();
+}
+
+void manetGLView::shutdown() 
+{
     for (vector<StringIndexedMenuItem*>::iterator i=layerMenuItems.begin(); i!=layerMenuItems.end(); ++i)
         delete *i;
 
@@ -990,12 +994,12 @@ manetGLView::~manetGLView()
     };
     for (unsigned int i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
         if (threads[i]) {
+            threads[i]->interrupt();
+            threads[i]->join();
             delete threads[i];
             threads[i]=NULL;
         }
     }
-
-    TRACE_EXIT();
 }
 
 void manetGLView::addLayerMenuItem(const GUILayer &layer, bool active)
@@ -1402,8 +1406,6 @@ void manetGLView::initializeGL()
 {
     TRACE_ENTER();
 
-    TRACE_ENTER();
-
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1430,8 +1432,6 @@ void manetGLView::initializeGL()
 
     glMaterialfv(GL_FRONT, GL_SPECULAR, specReflection);
     glMaterialf(GL_FRONT, GL_SHININESS, matShine);
-
-    TRACE_EXIT();
 
     TRACE_EXIT();
 }
@@ -1620,6 +1620,7 @@ void manetGLView::paintGL()
     if (!messageStream)
         drawNotConnectedState();
     else {
+
         {
             boost::lock_guard<boost::mutex> l(graphMutex);
             drawManet();
