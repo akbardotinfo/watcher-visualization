@@ -33,7 +33,7 @@ INIT_LOGGER(EdgeDisplayInfo, "DisplayInfo.EdgeDisplayInfo");
 EdgeDisplayInfo::EdgeDisplayInfo() :
     DisplayInfo("edge"),
     color(blue),
-    width(30),
+    width(2),
     flash(false), 
     flashInterval(500),
     nextFlashUpdate(0), 
@@ -130,11 +130,14 @@ void EdgeDisplayInfo::saveConfiguration()
     SingletonConfig::lock();
 
     try {
+        edgeSetting["label"]=label; 
         edgeSetting["color"]=color.toString(); 
         edgeSetting["width"]=width; 
         edgeSetting["flash"]=flash; 
         edgeSetting["flashInterval"]=(int)flashInterval;
-        edgeSetting["label"]=label; 
+        edgeSetting["labelFont"]=labelFont; 
+        edgeSetting["labelPointSize"]=labelPointSize; 
+        edgeSetting["labelColor"]=labelColor.toString(); 
     }
     catch (const SettingException &e) {
         LOG_ERROR("Error in configuration setting \"" << e.getPath() << "\"");

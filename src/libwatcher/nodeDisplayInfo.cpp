@@ -81,15 +81,12 @@ bool NodeDisplayInfo::loadConfiguration(const GUILayer &layer_, const NodeIdenti
     // libconfig path ids cannot start with numbers or contain '.'
     // which is really annoying. So an id for node 192.168.1.123 ends up 
     // looking like "node_192_168_1_123". Sigh.
-    string nodeIdAsConfigId(categoryName);      // default node config is just under this. 
-    if (nid!=NodeIdentifier()) 
-    {
-        nodeId=nid; 
-        nodeIdAsConfigId+="_";
-        string nodeIdAsString(nid.to_string()); 
-        replace(nodeIdAsString.begin(), nodeIdAsString.end(), '.', '_'); 
-        nodeIdAsConfigId+=nodeIdAsString; 
-    }
+    string nodeIdAsConfigId(categoryName + "_");      // default node config is just under this. 
+    string nodeIdAsString(nid.to_string()); 
+    replace(nodeIdAsString.begin(), nodeIdAsString.end(), '.', '_'); 
+    nodeIdAsConfigId+=nodeIdAsString; 
+
+    nodeId=nid;
 
     LOG_DEBUG("Looking up and loading node props for node with id: \"" << nodeIdAsConfigId << "\"");
     categoryName=nodeIdAsConfigId; 
@@ -239,3 +236,45 @@ void NodeDisplayInfo::saveConfiguration()
     SingletonConfig::unlock();
 }
 
+/**
+ * Return the label for this node.  The NodeIdentifier for the associated node is passed in order to use the
+ * IP address as a basis.
+ * @param nodeId the node associated with this label
+ * @return the label to use for this node
+ */
+std::string NodeDisplayInfo::get_label()
+{
+    // a little awkward since we're mixing enums, reserved strings, and free form strings
+    if (!nodeId.is_v4())
+        return nodeId.to_string(); //punt
+
+    unsigned long addr = nodeId.to_v4().to_ulong(); // host byte order. 
+    char buf[64]; 
+
+    if (label == NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::FOUR_OCTETS))
+        snprintf(buf, sizeof(buf), "%lu.%lu.%lu.%lu", ((addr)>>24)&0xFF,((addr)>>16)&0xFF,((addr)>>8)&0xFF,(addr)&0xFF); 
+    else if (label == labelDefault2String(NodeDisplayInfo::THREE_OCTETS))
+        snprintf(buf, sizeof(buf), "%lu.%lu.%lu", ((addr)>>16)&0xFF,((addr)>>8)&0xFF,(addr)&0xFF); 
+    else if (label == labelDefault2String(NodeDisplayInfo::TWO_OCTETS))
+        snprintf(buf, sizeof(buf), "%lu.%lu", ((addr)>>8)&0xFF,(addr)&0xFF); 
+    else if (label == labelDefault2String(NodeDisplayInfo::LAST_OCTET))
+        snprintf(buf, sizeof(buf), "%lu", (addr)&0xFF); 
+    else if (label == "none")
+        buf[0]='\0';
+    else if (label == labelDefault2String(NodeDisplayInfo::HOSTNAME)) {
+        in_addr saddr; 
+        saddr.s_addr = htonl(addr); 
+        hostent *he = gethostbyaddr((const void *)saddr.s_addr, sizeof(saddr.s_addr), AF_INET); 
+        if (he) {
+            snprintf(buf, sizeof(buf), "%s", he->h_name); 
+            label = buf; // only do the lookup one time successfully per host. 
+        } else {
+            LOG_WARN("Unable to get hostnmae for node " << nodeId); 
+            label = "UnableToGetHostNameSorry";
+        }
+        return label;
+    } else
+        return label;  // use what is ever there. 
+
+    return std::string(buf);
+}

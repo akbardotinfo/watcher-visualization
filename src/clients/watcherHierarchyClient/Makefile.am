@@ -1,10 +1,7 @@
 
 include $(srcdir)/../Makefile.clients
 
-CXXFLAGS+=-I/usr/include/libxml2 
-LDADD+=-lxml2
-
-CPPFLAGS += @BOOST_CPPFLAGS@
+CXXFLAGS += @BOOST_CPPFLAGS@
 LDFLAGS += @BOOST_LDFLAGS@
 LIBS+=$(BOOST_ASIO_LIB) $(BOOST_SERIALIZATION_LIB) $(BOOST_THREAD_LIB) $(BOOST_SYSTEM_LIB)
 
@@ -14,27 +11,21 @@ BUILT_SOURCES=watcherHierarchyClient.log.properties
 CXXFLAGS+=-I../../include 
 CXXFLAGS+=-I../../libwatcher 
 CXXFLAGS+=-I../../watcherd
-CXXFLAGS+=-I../../logger
-CXXFLAGS+=-I../../idsCommunications
+CXXFLAGS+=@LOGGER_CFLAGS@
+CXXFLAGS+=@idsCommunications_CFLAGS@
 CXXFLAGS+=-I../..
 
-CFLAGS+=-I../../../include
-CFLAGS+=-I/usr/include/libxml2
+CFLAGS+=$(CXXFLAGS)
 
-LDFLAGS+=-L/usr/local/lib/
 LDFLAGS+=-L../../libwatcher
 LDFLAGS+=-L../../watcherd
-LDFLAGS+=-L../../../lib
-LDFLAGS+=-L../../logger
-LDFLAGS+=-L../../idsCommunications
+LDFLAGS+=@LOGGER_LIBS@
 
-LIBS+=-lidsCommunications
-LIBS+=-llog4cxx
-LIBS+=-llogger
 LIBS+=-lwatcher
 LIBS+=-lwatchermsg
 LIBS+=-lwatcher
-LIBS+=-lidsCommunications
+LIBS+=@idsCommunications_LIBS@
+LIBS+=$(BOOST_PROGRAM_OPTIONS_LIB)
 
 bin_PROGRAMS=watcherHierarchyClient
 
@@ -44,7 +35,14 @@ watcherHierarchyClient_SOURCES=\
 	legacyWatcherMessageUnmarshal.cpp \
 	legacyWatcherMessageUnmarshal.h \
 	marshal.h \
-	watcherGPS.cpp \
-	watcherGPS.h \
-	watcherHierarchyClient.cpp
+	watcherHierarchyClient.cpp \
+	configuration.cpp configuration.h \
+	AlertHandler.cpp AlertHandler.h  \
+	AlertHandlerDefault.cpp AlertHandlerDefault.h  \
+	AlertHandlerFictitiousNeighbor.cpp AlertHandlerFictitiousNeighbor.h  \
+	AlertHandlerOmittedNeighbor.cpp AlertHandlerOmittedNeighbor.h  \
+	AlertHandlers.cpp AlertHandlers.h  \
+	AlertHandlerWormhole.cpp AlertHandlerWormhole.h \
+	XPathExtractor.cpp XPathExtractor.h \
+	alertClassifications.h
 

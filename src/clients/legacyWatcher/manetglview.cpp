@@ -29,15 +29,18 @@
 #include <boost/foreach.hpp>
 #include <values.h>  // DBL_MAX
 #include <GL/glut.h>
+#include <sstream>
 
 #include <libwatcher/watcherGraph.h>
 #include <libwatcher/seekWatcherMessage.h>  // for epoch, eof
 #include <libwatcher/playbackTimeRange.h>  // for epoch, eof
 
+#include "watcherAboutDialog.h"
 #include "manetglview.h"
 #include "watcherScrollingGraphControl.h"
 #include "singletonConfig.h"
 #include "backgroundImage.h"
+#include "logger.h"
 
 INIT_LOGGER(manetGLView, "manetGLView");
 
@@ -49,6 +52,30 @@ using namespace boost;
 using namespace boost::graph;
 using namespace boost::date_time;
 using namespace boost::posix_time;
+
+namespace watcher 
+{ 
+    float fast_arctan2( float y, float x )
+    {
+        const float ONEQTR_PI = M_PI / 4.0;
+        const float THRQTR_PI = 3.0 * M_PI / 4.0;
+        float r, angle;
+        float abs_y = fabs(y) + 1e-10f;      // kludge to prevent 0/0 condition
+        if ( x < 0.0f ) {
+            r = (x + abs_y) / (abs_y - x);
+            angle = THRQTR_PI;
+        }
+        else {
+            r = (x - abs_y) / (x + abs_y);
+            angle = ONEQTR_PI;
+        }
+        angle += (0.1963f * r * r - 0.9817f) * r;
+        if ( y < 0.0f )
+            return( -angle );     // negate if in quad III or IV
+        else
+            return( angle );
+    }
+}
 
 /*
  * Get the world coordinate (x,y,z) for the projected coordinates (x, y)
@@ -587,8 +614,7 @@ void manetGLView::scaleAndShiftToCenter(ScaleAndShiftUpdate onChangeOrAlways)
     for(tie(vi, vend)=vertices(wGraph.theGraph); vi!=vend; ++vi)
     {
         WatcherGraphNode &n=wGraph.theGraph[*vi]; 
-        GLdouble x, y, z; 
-        gps2openGLPixels(n.gpsData->dataFormat, n.gpsData->x, n.gpsData->y, n.gpsData->z, x, y, z); 
+        GLdouble x=n.gpsData->x, y=n.gpsData->y, z=n.gpsData->z;
 
         double r = 0;
         if(includeAntenna)
@@ -862,15 +888,14 @@ void manetGLView::rotateZ(float deg)
     if(autoCenterNodesFlag)
         scaleAndShiftToCenter(ScaleAndShiftUpdateAlways);
 } 
-
-void manetGLView::gps2openGLPixels(const GPSMessage::DataFormat &format, const double inx, const double iny, const double inz, GLdouble &x, GLdouble &y, GLdouble &z) 
+//static 
+bool manetGLView::gps2openGLPixels(GPSMessagePtr &gpsMess)
 {
-    TRACE_ENTER();
+    // TRACE_ENTER();
 
-    // GTL - this should be done when the message is recv'd - not every time we need to 
-    // compute the points - which is a whole hell of a lot of times.
+    double x, y, z, inx=gpsMess->x, iny=gpsMess->y, inz=gpsMess->z;
 
-    if (format==GPSMessage::UTM)
+    if (gpsMess->dataFormat==GPSMessage::UTM)
     {
         //
         // There is no UTM zone information in the UTM GPS packet, so we assume all data is in a single
@@ -879,8 +904,8 @@ void manetGLView::gps2openGLPixels(const GPSMessage::DataFormat &format, const d
         // by the first coord we get. (Nodes are all centered around 0,0 where, 0,0 is defined 
         // by the first coord we receive. 
         //
-        if (iny < 91 && inx > 0) 
-            LOG_WARN("Received GPS data that looks like lat/long in degrees, but GPS data format mode is set to UTM in cfg file."); 
+        // if (iny < 91 && inx > 0) 
+        //     LOG_WARN("Received GPS data that looks like lat/long in degrees, but GPS data format mode is set to UTM in cfg file."); 
 
         static double utmXOffset=0.0, utmYOffset=0.0;
         static bool utmOffInit=false;
@@ -902,12 +927,19 @@ void manetGLView::gps2openGLPixels(const GPSMessage::DataFormat &format, const d
     }
     else // default to lat/long/alt WGS84
     {
-        if (inx > 180)
-            LOG_WARN("Received GPS data that may be UTM (long>180), but GPS data format mode is set to lat/long degrees in cfg file."); 
+        if (inx > 180) 
+            LOG_WARN("Received GPS data (" << inx << ", " << iny << ", " << inz << ") that may be UTM (long>180), but GPS data format mode is set to lat/long degrees in cfg file."); 
+
+        Config &cfg=SingletonConfig::instance();
+        SingletonConfig::lock();
+        libconfig::Setting &root=cfg.getRoot();
+        float gpsScale;
+        root.lookupValue("gpsScale", gpsScale);
+        SingletonConfig::unlock();
 
         x=inx*gpsScale;
         y=iny*gpsScale;
-        z=inz-20;
+        z=inz;
 
         static double xOff=0.0, yOff=0.0;
         static bool xOffInit=false;
@@ -928,14 +960,24 @@ void manetGLView::gps2openGLPixels(const GPSMessage::DataFormat &format, const d
         // LOG_DEBUG("translated GPS: x:" << us->x << " y:" << us->y << " z:" << us->z); 
     }
     // LOG_DEBUG("Converted GPS from " << inx << ", " << iny << ", " << inz << " to " << x << ", " << y << ", " << z); 
-    TRACE_EXIT();
+
+    gpsMess->x=x;
+    gpsMess->y=y;
+    gpsMess->z=z;
+
+    // TRACE_EXIT();
+    return true;
 }
 
 manetGLView::manetGLView(QWidget *parent) : 
     QGLWidget(QGLFormat(QGL::SampleBuffers), parent),
+    watcherdConnectionThread(NULL),
+    maintainGraphThread(NULL),
+    checkIOThread(NULL),
     streamRate(1.0),
     playbackPaused(false),
     autorewind(false), 
+    messageStreamFiltering(false), 
     sliderPressed(false),
     currentMessageTimestamp(0),
     playbackRangeEnd(0),
@@ -948,7 +990,9 @@ manetGLView::manetGLView(QWidget *parent) :
     statusFontName("Helvetica"),
     hierarchyRingColor(),
     playbackStartTime(SeekMessage::eof),  // live mode
-    autoCenterNodesFlag(false)
+    autoCenterNodesFlag(false),
+    nodesDrawn(0), edgesDrawn(0), labelsDrawn(0),
+    framesDrawn(0), fpsTimeBase(0), framesPerSec(0.0)
 {
     TRACE_ENTER();
     manetAdjInit.angleX=0.0;
@@ -962,17 +1006,43 @@ manetGLView::manetGLView(QWidget *parent) :
     manetAdjInit.shiftZ=0.0;
     setFocusPolicy(Qt::StrongFocus); // tab and click to focus
 
+    // Translate incoming GPS to opengl locations
+    wGraph.locationTranslationFunction=&manetGLView::gps2openGLPixels; 
+
     // Don't oeverwrite QPAinter...
     setAutoFillBackground(false);
+
     TRACE_EXIT();
 }
 
 manetGLView::~manetGLView()
 {
-    TRACE_ENTER();
+    shutdown();
+}
+
+void manetGLView::shutdown() 
+{
+    saveConfiguration();
+
     for (vector<StringIndexedMenuItem*>::iterator i=layerMenuItems.begin(); i!=layerMenuItems.end(); ++i)
         delete *i;
-    TRACE_EXIT();
+
+    // Grab the lock and kill the threads.
+    boost::lock_guard<boost::mutex> l(graphMutex);
+    boost::thread *threads[]={
+        watcherdConnectionThread, 
+        maintainGraphThread, 
+        checkIOThread
+    };
+    for (unsigned int i=0; i<sizeof(threads)/sizeof(threads[0]); i++) {
+        if (threads[i]) {
+            // GTL - this does not work. 
+            // threads[i]->interrupt();
+            // threads[i]->join();
+            delete threads[i];
+            threads[i]=NULL;
+        }
+    }
 }
 
 void manetGLView::addLayerMenuItem(const GUILayer &layer, bool active)
@@ -1045,13 +1115,10 @@ bool manetGLView::loadConfiguration()
     try {
 
         string prop="server";
-        if (!root.lookupValue(prop, serverName))
-        {
-            LOG_FATAL("Please specify the server name in the cfg file");
-            LOG_FATAL("I set the default to localhost, but that may not be what you want."); 
+        if (!root.lookupValue(prop, serverName)) {
+            LOG_WARN("Please specify the server name in the cfg file");
+            LOG_WARN("I set the default to localhost, but that may not be what you want."); 
             root.add(prop, Setting::TypeString)="localhost"; 
-            TRACE_EXIT_RET_BOOL(false); 
-            return false;
         }
 
         prop="layers";
@@ -1098,7 +1165,9 @@ bool manetGLView::loadConfiguration()
             { "showWallTime", true, &showWallTimeinStatusString }, 
             { "showPlaybackTime", true, &showPlaybackTimeInStatusString },
             { "showPlaybackRange", true, &showPlaybackRangeString },
-            { "autorewind", true, &autorewind }
+            { "showDebugInfo", false, &showDebugInfo },
+            { "autorewind", true, &autorewind },
+            { "messageStreamFiltering", false, &messageStreamFiltering }
         }; 
         for (size_t i=0; i<sizeof(boolVals)/sizeof(boolVals[0]); i++)
         {
@@ -1112,6 +1181,8 @@ bool manetGLView::loadConfiguration()
         emit threeDViewToggled(threeDView);
         emit monochromeToggled(monochromeMode);
         emit backgroundImageToggled(backgroundImage);
+        emit loopPlaybackToggled(autorewind);
+        emit enableStreamFiltering(messageStreamFiltering);
         emit checkPlaybackTime(showPlaybackTimeInStatusString);
         emit checkPlaybackRange(showPlaybackRangeString);
         emit checkWallTime(showWallTimeinStatusString);
@@ -1335,13 +1406,12 @@ bool manetGLView::loadConfiguration()
     // 
     // Set up timer callbacks.
     //
-    QTimer *checkIOTimer = new QTimer(this);
-    QObject::connect(checkIOTimer, SIGNAL(timeout()), this, SLOT(checkIO()));
-    checkIOTimer->start(100);
-
     QTimer *watcherIdleTimer = new QTimer(this);
     QObject::connect(watcherIdleTimer, SIGNAL(timeout()), this, SLOT(watcherIdle()));
     watcherIdleTimer->start(100); 
+
+    // start work threads
+    watcherdConnectionThread=new boost::thread(boost::bind(&manetGLView::connectStream, this));
 
     TRACE_EXIT();
     return retVal;
@@ -1363,6 +1433,15 @@ QSize manetGLView::sizeHint() const
     return retVal;
 }
 
+// Values figure out by hand using Number and shift keys.
+static GLfloat matShine=0.6;
+static GLfloat specReflection[] = { 0.05, 0.05, 0.05, 1.0f };
+static GLfloat globalAmbientLight[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+static GLfloat posLight0[]={ 50.0f, 50.0f, 000.0f, 1.0f };
+static GLfloat ambLight0[]={ 0.25, 0.25, 0.25, 1.0f };
+static GLfloat specLight0[]={ 0.1f, 0.1f, 0.1f, 1.0f };
+static GLfloat diffLight0[]={ 0.05, 0.05, 0.05, 1.0f };
+
 void manetGLView::initializeGL()
 {
     TRACE_ENTER();
@@ -1371,31 +1450,67 @@ void manetGLView::initializeGL()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     // glBlendFunc(GL_SRC_ALPHA_SATURATE, GL_ONE); 
+    
+    glEnable(GL_TEXTURE_2D);
+
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, globalAmbientLight);
 
     glShadeModel(GL_SMOOTH); 
+    // glShadeModel(GL_FLAT); 
 
     // LIGHT0
-    GLfloat posLight0[]={ 50.0f, 50.0f, 000.0f, 1.0f };
     glLightfv(GL_LIGHT0, GL_POSITION, posLight0);
-
-    GLfloat ambLight0[]={ 0.0, 0.0, 0.0, 1.0 };
     glLightfv(GL_LIGHT0, GL_AMBIENT, ambLight0); 
-    
-    GLfloat specLight0[]={ 1.0, 1.0, 1.0, 1.0 };
     glLightfv(GL_LIGHT0, GL_SPECULAR, specLight0);
-    
-    GLfloat diffLight0[]= { 1.0, 1.0, 1.0, 1.0 }; 
     glLightfv(GL_LIGHT0, GL_DIFFUSE, diffLight0);
 
-    GLfloat ambLightDef[]={0.1,0.1,0.1,1.0}; // OPenGL's default is: 0.2,0.2,0.2,1
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambLightDef); 
-    
     glEnable(GL_LIGHTING); 
     glEnable(GL_LIGHT0); 
 
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+    glColorMaterial(GL_FRONT, GL_AMBIENT_AND_DIFFUSE);
     glEnable(GL_COLOR_MATERIAL);
 
+    glMaterialfv(GL_FRONT, GL_SPECULAR, specReflection);
+    glMaterialf(GL_FRONT, GL_SHININESS, matShine);
+
+    TRACE_EXIT();
+}
+
+void manetGLView::connectStream() 
+{
+    TRACE_ENTER();
+    while(1) {
+        if (!messageStream) {
+            messageStream=MessageStream::createNewMessageStream(serverName);     // This blocks until connected
+            messageStream->setStreamTimeStart(playbackStartTime);
+            messageStream->startStream();
+            messageStream->getMessageTimeRange();
+            messageStream->enableFiltering(messageStreamFiltering);
+
+            // Tell the watcherd that we want/don't want messages for this layer.
+            if (messageStreamFiltering) { 
+                BOOST_FOREACH(LayerListItemPtr &llip, knownLayers) {
+                    MessageStreamFilterPtr f(new MessageStreamFilter);
+                    f->setLayer(llip->layer);
+                    if (llip->active)
+                        messageStream->addMessageFilter(f);
+                    else
+                        messageStream->removeMessageFilter(f);
+                }
+            }
+
+            // spawn work threads
+            if (!checkIOThread) 
+                checkIOThread=new boost::thread(boost::bind(&manetGLView::checkIO, this));
+            if (!maintainGraphThread) 
+                maintainGraphThread=new boost::thread(boost::bind(&manetGLView::maintainGraph, this));
+
+        }
+        else  {
+            // There needs to be some test connection, reconnect logic here.
+            sleep(10);
+        }
+    }
     TRACE_EXIT();
 }
 
@@ -1403,90 +1518,85 @@ void manetGLView::checkIO()
 {
     TRACE_ENTER();
 
-    if (!messageStream)
-    {
-        messageStream=MessageStream::createNewMessageStream(serverName); 
-        messageStream->setStreamTimeStart(playbackStartTime);
-        messageStream->startStream();
-        messageStream->getMessageTimeRange();
-    }
-   
-    int messagesProcessed=0;
-    while(messageStream && messageStream->isStreamReadable() && ++messagesProcessed<100)
-    {
+    while(true) {
+        bool timeRangeMessageSent=false;
         MessagePtr message;
-        messageStream->getNextMessage(message);
-        static unsigned long long messageCount=0;
-        LOG_DEBUG("Got message number " <<  ++messageCount << " : " << *message);
+        while(messageStream && messageStream->getNextMessage(message)) {
+            static unsigned long long messageCount=0;
+            LOG_DEBUG("Got message number " <<  ++messageCount << " : " << *message);
 
+            if (!isFeederEvent(message->type)) {
+                if (message->type==PLAYBACK_TIME_RANGE_MESSAGE_TYPE) {
+                    PlaybackTimeRangeMessagePtr trm(dynamic_pointer_cast<PlaybackTimeRangeMessage>(message));
+                    playbackRangeEnd=trm->max_;
+                    playbackRangeStart=trm->min_;
+                    if (playbackSlider)
+                        playbackSlider->setRange(playbackRangeStart/1000, playbackRangeEnd/1000);
+                    if (!currentMessageTimestamp)
+                        currentMessageTimestamp=
+                            playbackStartTime==SeekMessage::epoch ? playbackRangeStart : 
+                            playbackStartTime==SeekMessage::eof ? playbackRangeEnd : playbackStartTime;
+                    timeRangeMessageSent=false;
+                }
 
-        if (!isFeederEvent(message->type)) {
-            if (message->type==PLAYBACK_TIME_RANGE_MESSAGE_TYPE) {
-                PlaybackTimeRangeMessagePtr trm(dynamic_pointer_cast<PlaybackTimeRangeMessage>(message));
-                playbackRangeEnd=trm->max_;
-                playbackRangeStart=trm->min_;
-                if (playbackSlider)
-                    playbackSlider->setRange(playbackRangeStart/1000, playbackRangeEnd/1000);
-                if (!currentMessageTimestamp)
-                    currentMessageTimestamp=
-                        playbackStartTime==SeekMessage::epoch ? playbackRangeStart : 
-                        playbackStartTime==SeekMessage::eof ? playbackRangeEnd : playbackStartTime;
-                                           
+                // End of handling non feeder messages. 
+                continue;
             }
 
-            // End of handling non feeder messages. 
-            continue;
-        }
-
-        wGraph.updateGraph(message);
-
-        // DataPoint data is handled directly by the scrolling graph thing.
-        if (message->type==DATA_POINT_MESSAGE_TYPE)
-        {
-            WatcherScrollingGraphControl *sgc=WatcherScrollingGraphControl::getWatcherScrollingGraphControl();
-            sgc->handleDataPointMessage(dynamic_pointer_cast<DataPointMessage>(message));
-        }
-
-        currentMessageTimestamp=message->timestamp;
-        if (!sliderPressed)
-           playbackSlider->setValue(currentMessageTimestamp/1000); 
-
-        if (currentMessageTimestamp>playbackRangeEnd+1000)
-            messageStream->getMessageTimeRange();
-
-        // Really need to make layers a member of a base class...
-        GUILayer layer;
-        switch (message->type)
-        {
-            case LABEL_MESSAGE_TYPE: layer=(dynamic_pointer_cast<LabelMessage>(message))->layer; break;
-            case EDGE_MESSAGE_TYPE: layer=(dynamic_pointer_cast<EdgeMessage>(message))->layer; break;
-            case COLOR_MESSAGE_TYPE: layer=(dynamic_pointer_cast<ColorMessage>(message))->layer; break;
-            case CONNECTIVITY_MESSAGE_TYPE: layer=(dynamic_pointer_cast<ConnectivityMessage>(message))->layer; break;
-            case NODE_PROPERTIES_MESSAGE_TYPE: layer=(dynamic_pointer_cast<NodePropertiesMessage>(message))->layer; break;
-            default: break;
-        }
-
-        if (!layer.empty())
-        {
-            LOG_DEBUG("Seeing if " << layer << " is known to us or not."); 
-            bool found=false;
-            BOOST_FOREACH(LayerListItemPtr &llip, knownLayers)
             {
-                if (llip->layer==layer)
+                boost::lock_guard<boost::mutex> l(graphMutex);
+                wGraph.updateGraph(message);
+            }
+
+            // DataPoint data is handled directly by the scrolling graph thing.
+            if (message->type==DATA_POINT_MESSAGE_TYPE) {
+                WatcherScrollingGraphControl *sgc=WatcherScrollingGraphControl::getWatcherScrollingGraphControl();
+                sgc->handleDataPointMessage(dynamic_pointer_cast<DataPointMessage>(message));
+            }
+
+            currentMessageTimestamp=message->timestamp;
+            if (!sliderPressed)
+                playbackSlider->setValue(currentMessageTimestamp/1000); 
+
+            if (currentMessageTimestamp>playbackRangeEnd+10000 && !timeRangeMessageSent) { 
+                messageStream->getMessageTimeRange();
+                timeRangeMessageSent=true;
+            }
+
+            // Really need to make layers a member of a base class...
+            GUILayer layer;
+            switch (message->type)
+            {
+                case LABEL_MESSAGE_TYPE: layer=(dynamic_pointer_cast<LabelMessage>(message))->layer; break;
+                case EDGE_MESSAGE_TYPE: layer=(dynamic_pointer_cast<EdgeMessage>(message))->layer; break;
+                case COLOR_MESSAGE_TYPE: layer=(dynamic_pointer_cast<ColorMessage>(message))->layer; break;
+                case CONNECTIVITY_MESSAGE_TYPE: layer=(dynamic_pointer_cast<ConnectivityMessage>(message))->layer; break;
+                case NODE_PROPERTIES_MESSAGE_TYPE: layer=(dynamic_pointer_cast<NodePropertiesMessage>(message))->layer; break;
+                default: break;
+            }
+
+            if (!layer.empty()) {
+                LOG_DEBUG("Seeing if " << layer << " is known to us or not."); 
+                bool found=false;
+                BOOST_FOREACH(LayerListItemPtr &llip, knownLayers)
                 {
-                    found=true;
-                    break;
+                    if (llip->layer==layer)
+                    {
+                        found=true;
+                        break;
+                    }
+                }
+                if(!found)
+                {
+                    LOG_DEBUG("Adding new layer to known layers: " << layer); 
+                    addLayerMenuItem(layer, true); 
                 }
             }
-            if(!found)
-            {
-                LOG_DEBUG("Adding new layer to known layers: " << layer); 
-                addLayerMenuItem(layer, true); 
-            }
         }
+        updateGL();  // redraw
+        // usleep(100000);
     }
 
-    updateGL();  // redraw
     TRACE_EXIT();
 }
 
@@ -1525,15 +1635,156 @@ void manetGLView::watcherIdle()
             noNewMessagesForSeconds=0;
     }
 
+    updateGL();
+
     TRACE_EXIT();
 }
 
-void manetGLView::paintGL() 
+void manetGLView::maintainGraph() 
+{
+    TRACE_ENTER();
+    while (true) {
+        if (!playbackPaused) {      // If paused, just keep things as they are.
+            boost::lock_guard<boost::mutex> l(graphMutex);
+            wGraph.doMaintanence(currentMessageTimestamp); // check expiration, etc. 
+        }
+        usleep(100000);
+    }
+    TRACE_EXIT();
+}
+
+void manetGLView::paintGL()
 {
     TRACE_ENTER();
 
-    wGraph.doMaintanence(); // check expiration, etc. 
-    drawManet();
+    if (!messageStream)
+        drawNotConnectedState();
+    else {
+
+        {
+            boost::lock_guard<boost::mutex> l(graphMutex);
+            drawManet();
+        }
+        
+        // drawStatusString uses QPainter so must be called 
+        // after all openGL calls
+        drawStatusString(); 
+
+        if (showDebugInfo)
+            drawDebugInfo();
+    }
+
+    TRACE_EXIT();
+}
+
+void manetGLView::drawDebugInfo()
+{
+    TRACE_ENTER();
+
+    ostringstream info;
+    info << "Messages sent: " << messageStream->messagesSent << endl;
+    info << "Messages arrived: " << messageStream->messagesArrived << endl;
+    info << "Messages dropped: " << messageStream->messagesDropped << endl;
+    info << "Messages queued: " << messageStream->messageQueueSize() << endl;
+
+    info << "N/E/L: " << nodesDrawn << "/" << edgesDrawn << "/" << labelsDrawn << endl;
+    nodesDrawn=edgesDrawn=labelsDrawn=0;
+
+    framesDrawn++;
+    int time=glutGet(GLUT_ELAPSED_TIME);
+    if (time - fpsTimeBase > 1000) {
+        framesPerSec = framesDrawn*1000.0/(time-fpsTimeBase);
+        fpsTimeBase = time;        
+        framesDrawn = 0;
+    }
+    info << "FPS: " << framesPerSec << endl;
+    // info << "mat shine: " << matShine << endl;
+    // info << "spec reflect: " << specReflection[0] << endl;
+    // info << "amb light: " << ambLight0[0] << endl;
+    // info << "diff light: " << diffLight0[0] << endl;
+    // info << "spec light: " << specLight0[0] << endl;
+    // info << "global amb light: " << globalAmbientLight[0] << endl;
+
+    QPainter painter(this);
+    QString text(info.str().c_str());
+    QFont font(statusFontName.c_str(), statusFontPointSize); 
+    QFontMetrics metrics = QFontMetrics(font);
+    int border = qMax(4, metrics.leading());
+    QRect rect = metrics.boundingRect(0, 0, width() - 2*border, int(height()*0.125), Qt::AlignCenter | Qt::TextWordWrap, text);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setFont(font);
+    painter.setPen(Qt::white); 
+    double padding=0.01;
+    painter.drawText(width()*padding, height()*padding, rect.width(), rect.height(), Qt::AlignLeft | Qt::TextWordWrap, text);
+    painter.end();
+
+    TRACE_EXIT();
+}
+
+void manetGLView::drawNotConnectedState()
+{
+    TRACE_ENTER();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glPushMatrix();
+    glScalef(1.0, 1.0, 1.0);
+
+    // Color -- red
+    glColor4ub(0xFF, 0x00, 0x00, 0xFF); 
+
+    // "head"
+    glTranslatef(0.0, 0.0, -10.0);
+    glNormal3f(0.0, 0.0, 1.0); 
+    glutSolidTorus(0.1, 2.5, 60, 60); 
+
+    // Eyes
+    double xOffs[]={-1.0, 1.0}; 
+    for (int i=0; i<2; i++) {
+        glPushMatrix();
+        glTranslatef(xOffs[i], 1.0, 0.0); 
+        glRotatef(90, 1.0, 0.0, 0.0); 
+        glRotatef(45, 0.0, 1.0, 0.0); 
+        GLUquadricObj *quadric=gluNewQuadric();
+        gluQuadricNormals(quadric, GLU_SMOOTH);
+        gluQuadricOrientation(quadric,GLU_OUTSIDE);
+        gluCylinder(quadric, 0.06, 0.03, 0.5, 32, 32); 
+        glRotatef(90, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.03, 0.5, 32, 32); 
+        glRotatef(90, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.03, 0.5, 32, 32); 
+        glRotatef(90, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.03, 0.5, 32, 32); 
+        gluDeleteQuadric(quadric);
+        glPopMatrix();
+    }
+
+    // mouth
+    {
+        GLUquadricObj *quadric=gluNewQuadric();
+        gluQuadricNormals(quadric, GLU_SMOOTH);
+        gluQuadricOrientation(quadric,GLU_OUTSIDE);
+        glPushMatrix();
+        glTranslatef(-1.0, -1.0, 0.0); 
+        glRotatef(90, 1.0, 0.0, 0.0); 
+        glRotatef(315, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.03, 0.8, 32, 32); 
+        glRotatef(135, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.06, 2.0, 32, 32); 
+        glPopMatrix();
+        glPushMatrix();
+        glTranslatef(1.0, -1.0, 0.0); 
+        glRotatef(90, 1.0, 0.0, 0.0); 
+        glRotatef(45, 0.0, 1.0, 0.0); 
+        gluCylinder(quadric, 0.06, 0.03, 0.8, 32, 32); 
+        glPopMatrix();
+    }
+
+
+    renderText(12, height()-12, QString("Not connected to watcher daemon. Trying to connect every 5 seconds."));
+
+    glPopMatrix();
 
     TRACE_EXIT();
 }
@@ -1616,66 +1867,72 @@ void manetGLView::drawManet(void)
             glPopMatrix();
         }
     }
+}
 
-    // draw status string
+void manetGLView::drawStatusString()
+{
+    // // draw status string
+    QPainter painter(this);
+
+    ptime now = from_time_t(time(NULL));
+
+    string buf;
+
+    Timestamp nowTS=getCurrentTime();
+    if (playbackPaused)
+        buf="(paused)";
+    else if (nowTS-2500.0<currentMessageTimestamp)
+        buf="(live)";
+    else if (playbackRangeEnd==currentMessageTimestamp && nowTS > playbackRangeEnd)
+        buf="(end of data)";
+    else
+        buf="(playback)";
+
+    if (showWallTimeinStatusString)
     {
-        glPushMatrix();
-
-        ptime now = from_time_t(time(NULL));
-        glScalef(0.02, 0.02, 0.02);
-
-        string buf;
-
-        Timestamp nowTS=getCurrentTime();
-        if (playbackPaused)
-            buf="(paused)";
-        else if (nowTS-2500.0<currentMessageTimestamp)
-            buf="(live)";
-        else if (playbackRangeEnd==currentMessageTimestamp && nowTS > playbackRangeEnd)
-            buf="(end of data)";
-        else
-            buf="(playback)";
-
-        if (showWallTimeinStatusString)
-        {
-            buf+=" Wall Time: ";
-            buf+=posix_time::to_iso_extended_string(now);
-        }
-        if (showPlaybackTimeInStatusString)
-        {
-            buf+=" Play Time: ";
-            buf+=posix_time::to_iso_extended_string(from_time_t(currentMessageTimestamp/1000));
-        }
-        if (showPlaybackRangeString)
-        {
-            buf+=" Time Range: ";
-            buf+=posix_time::to_iso_extended_string(from_time_t(playbackRangeStart/1000));
-            buf+=" to ";
-            buf+=posix_time::to_iso_extended_string(from_time_t(playbackRangeEnd/1000));
-        }
-
-        if (nowTS-2500.0<currentMessageTimestamp)
-            qglColor(QColor(monochromeMode ? "black" : "green")); 
-        else if (playbackRangeEnd==currentMessageTimestamp && nowTS > playbackRangeEnd)
-            qglColor(QColor(monochromeMode ? "black" : "blue")); 
-        else
-            qglColor(QColor(monochromeMode ? "black" : "red")); 
-
-        if (showVerboseStatusString)
-        {
-            char buff[256];
-            snprintf(buff, sizeof(buff), " Loc: %3.1f, %3.1f, %3.1f, scale: %f, %f, %f, text: %f lpad: %f",
-                    manetAdj.shiftX, manetAdj.shiftY, manetAdj.shiftZ, 
-                    manetAdj.scaleX, manetAdj.scaleY, manetAdj.scaleZ, 
-                    scaleText, layerPadding); 
-            buf+=string(buff); 
-        }
-        renderText(12, height()-12, QString(buf.c_str()), QFont(statusFontName.c_str(), statusFontPointSize)); 
-
-        glPopMatrix();
+        buf+="\nWall Time: ";
+        buf+=posix_time::to_iso_extended_string(now);
+    }
+    if (showPlaybackTimeInStatusString)
+    {
+        buf+="\nPlay Time: ";
+        buf+=posix_time::to_iso_extended_string(from_time_t(currentMessageTimestamp/1000));
+    }
+    if (showPlaybackRangeString)
+    {
+        buf+="\nTime Range: ";
+        buf+=posix_time::to_iso_extended_string(from_time_t(playbackRangeStart/1000));
+        buf+=" to ";
+        buf+=posix_time::to_iso_extended_string(from_time_t(playbackRangeEnd/1000));
     }
 
+    if (nowTS-2500.0<currentMessageTimestamp)
+        painter.setPen(QColor(monochromeMode ? "black" : "green")); 
+    else if (playbackRangeEnd==currentMessageTimestamp && nowTS > playbackRangeEnd)
+        painter.setPen(QColor(monochromeMode ? "black" : "blue")); 
+    else
+        painter.setPen(QColor(monochromeMode ? "black" : "red")); 
 
+    if (showVerboseStatusString)
+    {
+        char buff[256];
+        snprintf(buff, sizeof(buff), "\nLoc: %3.1f, %3.1f, %3.1f, scale: %f, %f, %f, text: %f lpad: %f",
+                manetAdj.shiftX, manetAdj.shiftY, manetAdj.shiftZ, 
+                manetAdj.scaleX, manetAdj.scaleY, manetAdj.scaleZ, 
+                scaleText, layerPadding); 
+        buf+=string(buff); 
+    }
+
+    QString text(buf.c_str());
+    QFont font(statusFontName.c_str(), statusFontPointSize); 
+    QFontMetrics metrics = QFontMetrics(font);
+    int border = qMax(4, metrics.leading());
+    QRect rect = metrics.boundingRect(0, 0, width() - 2*border, int(height()*0.125), Qt::AlignCenter | Qt::TextWordWrap, text);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+    painter.setFont(font);
+    double padding=0.01;
+    painter.drawText(width()*padding, height()-rect.height()-(height()*padding), rect.width(), rect.height(), Qt::AlignLeft | Qt::TextWordWrap, text);
+    painter.end();
 }
 
 void manetGLView::setPlaybackSlider(QSlider *s)
@@ -1720,13 +1977,14 @@ void manetGLView::updatePlaybackSliderFromGUI()
         TRACE_EXIT();
         return;
     }
- 
+
     Timestamp newStart(playbackSlider->value());
     newStart*=1000;
     LOG_DEBUG("slider update - new start time: " << newStart << " slider position: " << playbackSlider->value() << " cur mess ts: " << currentMessageTimestamp); 
 
     currentMessageTimestamp=newStart;  // So it displays in status string immediately. 
     playbackSlider->setValue(newStart/1000); 
+    messageStream->clearMessageCache();
     messageStream->setStreamTimeStart(newStart); 
     messageStream->startStream(); 
 
@@ -1738,11 +1996,16 @@ void manetGLView::drawEdge(const WatcherGraphEdge &edge, const WatcherGraphNode 
 {
     TRACE_ENTER(); 
 
-    GLdouble x1, y1, z1, x2, y2, z2, width;
-    gps2openGLPixels(node1.gpsData->dataFormat, node1.gpsData->x, node1.gpsData->y, node1.gpsData->z, x1, y1, z1); 
-    gps2openGLPixels(node2.gpsData->dataFormat, node2.gpsData->x, node2.gpsData->y, node2.gpsData->z, x2, y2, z2); 
+    edgesDrawn++;
 
-    width=edge.displayInfo->width;
+    GLdouble x1=node1.gpsData->x;
+    GLdouble y1=node1.gpsData->y;
+    GLdouble z1=node1.gpsData->z;
+    GLdouble x2=node2.gpsData->x;
+    GLdouble y2=node2.gpsData->y;
+    GLdouble z2=node2.gpsData->z;
+    
+    double width=edge.displayInfo->width;
 
     GLfloat edgeColor[]={
         edge.displayInfo->color.r/255.0, 
@@ -1759,7 +2022,7 @@ void manetGLView::drawEdge(const WatcherGraphEdge &edge, const WatcherGraphNode 
 
     if (!threeDView)
     {
-        double ax=atan2(x1-x2,y1-y2);
+        double ax=fast_arctan2(x1-x2,y1-y2);
         double cmx = sin(ax)*width;   // cos(a-M_PI_2)*width
         double cpx = -cmx;            // cos(a+M_PI_2)*width
         double smx = -cos(ax)*width;  // sin(a-M_PI_2)*width
@@ -1777,25 +2040,34 @@ void manetGLView::drawEdge(const WatcherGraphEdge &edge, const WatcherGraphNode 
     }
     else
     {
+        GLUquadricObj *quadric=gluNewQuadric();
+        gluQuadricNormals(quadric, GLU_SMOOTH);
+
+        float vx = x2-x1;
+        float vy = y2-y1;
+        float vz = z2-z1;
+
+        //handle the degenerate case of z1 == z2 with an approximation
+        if(vz == 0)
+            vz = .0001;
+
+        float v = sqrt( vx*vx + vy*vy + vz*vz );
+        float ax = 57.2957795*acos( vz/v );
+        if ( vz < 0.0 )
+            ax = -ax;
+        float rx = -vy*vz;
+        float ry = vx*vz;
         glPushMatrix();
-        glTranslatef(x1,y1,z1);
 
-        // gluCylinder draws "out the z axis", so rotate view 90 on the y axis and angle-between-the-nodes on the x axis
-        // before drawing the cylinder
+        //draw the cylinder body
+        glTranslatef( x1,y1,z1 );
+        glRotatef(ax, rx, ry, 0.0);
+        gluQuadricOrientation(quadric,GLU_OUTSIDE);
+        gluCylinder(quadric, width, 0, v, 15, 15);
 
-        glRotated(90.0, 0.0, 1.0, 0.0);                             // y rotate
-        glRotated(atan2(y1-y2,x2-x1)*(180/M_PI), 1.0, 0.0, 0.0);    // x rotate, y1-y2,x2-x1 was trail and error wrt the quadrants
+        glPopMatrix();
 
-        // glRotated(atan2(z1-z2,y2-y1)*(180/M_PI), 0.0, 1.0, 0.0);    // y rotate, y1-y2,x2-x1 was trail and error wrt the quadrants
-        // glRotated(atan2(x1-x2,z2-z1)*(180/M_PI), 0.0, 0.0, 1.0);    // z rotate, y1-y2,x2-x1 was trail and error wrt the quadrants
-        // float distance=sqrt(pow(x1-x2,2)+pow(y1-y2,2)+pow(z1-z2,2));
-        float distance=sqrt(pow(x1-x2,2)+pow(y1-y2,2)+pow(z1-z2,2));
-
-        GLUquadric *q=gluNewQuadric();
-        gluCylinder(q, width, 0, distance, 10, 10); 
-        gluDeleteQuadric(q);
-
-        glPopMatrix(); 
+        gluDeleteQuadric(quadric);
     }
 
     // draw the edge's label, if there is one.
@@ -1821,7 +2093,7 @@ void manetGLView::drawEdge(const WatcherGraphEdge &edge, const WatcherGraphNode 
         GLdouble lx=(x1+x2)/2.0; 
         GLdouble ly=(y1+y2)/2.0; 
         GLdouble lz=(z1+z2)/2.0; 
-        GLdouble a=atan2(x1-x2 , y1-y2);
+        GLdouble a=fast_arctan2(x1-x2 , y1-y2);
         GLdouble th=10.0;
         renderText(lx+sin(a-M_PI_2),ly+cos(a-M_PI_2)*th, lz, 
                 QString(edge.displayInfo->label.c_str()),
@@ -1851,19 +2123,16 @@ bool manetGLView::isActive(const watcher::GUILayer &layer)
 void manetGLView::drawNode(const WatcherGraphNode &node, bool physical)
 {
     TRACE_ENTER(); 
+    nodesDrawn++;
 
     // LOG_DEBUG("Drawing node on " << (physical?"non":"") << "physical layer."); 
 
-    GLdouble x, y, z; 
-    gps2openGLPixels(node.gpsData->dataFormat, node.gpsData->x, node.gpsData->y, node.gpsData->z, x, y, z); 
+    GLdouble x=node.gpsData->x;
+    GLdouble y=node.gpsData->y;
+    GLdouble z=node.gpsData->z;
 
     glPushMatrix();
     glTranslated(x, y, z);
-
-    handleSize(node.displayInfo);
-    handleProperties(node.displayInfo);
-
-    drawNodeLabel(node, physical);
 
     const GLfloat black[]={0.0,0.0,0.0,1.0};
     GLfloat nodeColor[]={
@@ -1873,10 +2142,27 @@ void manetGLView::drawNode(const WatcherGraphNode &node, bool physical)
         physical ? node.displayInfo->color.a/255.0 : ghostLayerTransparency
     };
 
+    drawNodeLabel(node, physical);
+
     if (monochromeMode)
         glColor4fv(black);
     else
         glColor4fv(nodeColor);
+
+    if (isActive(ANTENNARADIUS_LAYER)) { 
+        // 30.86666666666666666666 meters == 1 second of latitude
+        // 1/30.86666666666666666666 of a second of lat == 1 meter
+        // 0.000278 is a second in decimal degrees
+        // 0.000278*(1/30.86666)=.00000900648142688583==change in lat for one meter.
+        // This is still wrong though - or at least does not match MANE's idea of distance.
+        // drawWireframeSphere(antennaRadius*0.00000900648142688583*gpsScale);
+        // The number below is just an eyeball value.
+        drawWireframeSphere(antennaRadius*0.000015*gpsScale);
+    }
+
+    // Handle size after drawing antenna so as to not scale it
+    handleSize(node.displayInfo);
+    handleProperties(node.displayInfo);
 
     handleSpin(threeDView, node.displayInfo);
     switch(node.displayInfo->shape)
@@ -1888,8 +2174,7 @@ void manetGLView::drawNode(const WatcherGraphNode &node, bool physical)
         case NodePropertiesMessage::TEAPOT: drawTeapot(4); break;
         case NodePropertiesMessage::NOSHAPE: /* What is the shape of no shape? */ break;
     }
-    if (isActive(ANTENNARADIUS_LAYER))
-        drawWireframeSphere(antennaRadius); 
+
     glPopMatrix();
 
     TRACE_EXIT(); 
@@ -1912,54 +2197,9 @@ void manetGLView::drawNodeLabel(const WatcherGraphNode &node, bool physical)
     else
         glColor4fv(nodeColor);
 
-    // a little awkward since we're mixing enums, reserved strings, and free form strings
-    char buf[64]; 
-    if (!node.nodeId.is_v4())
-        snprintf(buf, sizeof(buf), "%s", node.nodeId.to_string().c_str());  // punt
-    else
-    {
-        unsigned long addr=node.nodeId.to_v4().to_ulong(); // host byte order. 
-
-        if (node.displayInfo->label==NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::FOUR_OCTETS))
-            snprintf(buf, sizeof(buf), "%lu.%lu.%lu.%lu", ((addr)>>24)&0xFF,((addr)>>16)&0xFF,((addr)>>8)&0xFF,(addr)&0xFF); 
-        else if (node.displayInfo->label==NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::THREE_OCTETS))
-            snprintf(buf, sizeof(buf), "%lu.%lu.%lu", ((addr)>>16)&0xFF,((addr)>>8)&0xFF,(addr)&0xFF); 
-        else if (node.displayInfo->label==NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::TWO_OCTETS))
-            snprintf(buf, sizeof(buf), "%lu.%lu", ((addr)>>8)&0xFF,(addr)&0xFF); 
-        else if (node.displayInfo->label==NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::LAST_OCTET))
-            snprintf(buf, sizeof(buf), "%lu", (addr)&0xFF); 
-        else if (node.displayInfo->label=="none")
-            buf[0]='\0';
-        else if (node.displayInfo->label==NodeDisplayInfo::labelDefault2String(NodeDisplayInfo::HOSTNAME))
-        {
-            struct in_addr saddr; 
-            saddr.s_addr=htonl(addr); 
-            struct hostent *he=gethostbyaddr((const void *)saddr.s_addr, sizeof(saddr.s_addr), AF_INET); 
-
-            if (he) 
-            {
-                snprintf(buf, sizeof(buf), "%s", he->h_name); 
-                // only do the lookup one time successfully per host. 
-                node.displayInfo->label=buf; 
-            }
-            else
-            {
-                LOG_WARN("Unable to get hostnmae for node " << node.nodeId); 
-                node.displayInfo->label="UnableToGetHostNameSorry";
-            }
-        }
-        else
-            snprintf(buf, sizeof(buf), "%s", node.displayInfo->label.c_str());  // use what is ever there. 
-    }        
-
-    // GLdouble x, y, z; 
-    // gps2openGLPixels(node.gpsData->dataFormat, node.gpsData->x, node.gpsData->y, node.gpsData->z, x, y, z); 
-    // renderText(x, y+6, z+5, QString(buf),
-    //             QFont(node.displayInfo->labelFont.c_str(), 
-    //                  (int)(node.displayInfo->labelPointSize*manetAdj.scaleX*scaleText))); 
-    renderText(0, 6, 3, QString(buf),
-                QFont(node.displayInfo->labelFont.c_str(), 
-                     (int)(node.displayInfo->labelPointSize*manetAdj.scaleX*scaleText))); 
+    renderText(0, 6, 3, QString(node.displayInfo->get_label().c_str()),
+            QFont(node.displayInfo->labelFont.c_str(), 
+                (int)(node.displayInfo->labelPointSize*manetAdj.scaleX*scaleText))); 
 
     TRACE_EXIT();
 }
@@ -1967,6 +2207,8 @@ void manetGLView::drawNodeLabel(const WatcherGraphNode &node, bool physical)
 void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDisplayInfoPtr &label)
 {
     TRACE_ENTER(); 
+
+    labelsDrawn++;
     // 
     int fgColor[]={
         label->foregroundColor.r, 
@@ -1989,21 +2231,31 @@ void manetGLView::drawLabel(GLfloat inx, GLfloat iny, GLfloat inz, const LabelDi
                 fgColor[i]=0; 
 
     float offset=4.0;
-        
+
     QFont f(label->fontName.c_str(), (int)(label->pointSize*manetAdj.scaleX*scaleText)); 
 
     // Do cheesy shadow effect as I can't get a proper bounding box around the text as
     // QFontMetric lisea bout how wide/tall the bounding box is. 
-    if (!monochromeMode)
-    {
-        qglColor(QColor(bgColor[0], bgColor[1], bgColor[2], bgColor[3])); 
-        QFontMetrics fm(f);
-        double shadowOffset=fm.height()*.02;
-        renderText(inx+offset+shadowOffset, iny+offset+shadowOffset, inz+1.0, label->labelText.c_str(), f); 
-    }
+    // if (!monochromeMode)
+    // {
+    //     qglColor(QColor(bgColor[0], bgColor[1], bgColor[2], bgColor[3])); 
+    //     QFontMetrics fm(f);
+    //     double shadowOffset=fm.height()*.02;
+    //     renderText(inx+offset+shadowOffset, iny+offset+shadowOffset, inz+1.0, label->labelText.c_str(), f); 
+    // }
 
     qglColor(QColor(fgColor[0], fgColor[1], fgColor[2], fgColor[3])); 
     renderText(inx+offset, iny+offset, inz+2.0, label->labelText.c_str(), f); 
+
+    // Use GLUT to draw labels, will be much faster.
+    // glColor3f(fgColor[0], fgColor[1], fgColor[2]);
+    // glPushMatrix();
+    // glLoadIdentity();
+    // setOrthographicProjection();
+    // for (char c=label->labelText.c_str(); *c != '\0'; c++) 
+    //     glutStrokeCharacter(GLUT_STROKE_ROMAN, *c);
+    // glPopMatrix();
+    // resetPerspectiveProjection();
 
     TRACE_EXIT(); 
 }
@@ -2019,8 +2271,7 @@ void manetGLView::drawLayer(const GUILayer &layer)
         for ( ; b!=e; ++b) {
             if ((*b)->layer==layer) {
                 // LOG_DEBUG("Displaying floating label: " << *b); 
-                GLdouble x, y, z; 
-                gps2openGLPixels(GPSMessage::LAT_LONG_ALT_WGS84, (*b)->lat, (*b)->lng, (*b)->alt, x, y, z); 
+                GLdouble x=(*b)->lat, y=(*b)->lng, z=(*b)->alt; 
                 LabelDisplayInfoPtr li=dynamic_pointer_cast<LabelDisplayInfo>(*b);
                 drawLabel(x, y, z, li);
             }
@@ -2049,10 +2300,7 @@ void manetGLView::drawLayer(const GUILayer &layer)
                 double lx=(node1.gpsData->x+node2.gpsData->x)/2.0; 
                 double ly=(node1.gpsData->y+node2.gpsData->y)/2.0; 
                 double lz=(node1.gpsData->z+node2.gpsData->z)/2.0; 
-
-                GLdouble x, y, z; 
-                gps2openGLPixels(node1.gpsData->dataFormat, lx, ly, lz, x, y, z); 
-                drawLabel(x, y, z, *li);
+                drawLabel(lx, ly, lz, *li);
             }
     }
 
@@ -2072,12 +2320,10 @@ void manetGLView::drawLayer(const GUILayer &layer)
         for( ; li!=lend; ++li)
             if ((*li)->layer==layer)
             {
-                GLdouble x, y, z; 
-                double lx=node.gpsData->x;
-                double ly=node.gpsData->y;
-                double lz=node.gpsData->z;
-                gps2openGLPixels(node.gpsData->dataFormat, lx, ly, lz, x, y, z); 
-                drawLabel(x, y, z, *li); 
+                GLdouble lx=node.gpsData->x;
+                GLdouble ly=node.gpsData->y;
+                GLdouble lz=node.gpsData->z;
+                drawLabel(lx, ly, lz, *li); 
             }
     }
 
@@ -2117,6 +2363,7 @@ void manetGLView::showKeyboardShortcuts()
         "C   - change background color\n"
         "F   - change information text font\n"
         "T   - reset layer padding to 0\n"
+        "D   - Display debugging information\n"
         "k/l - increase/decrease gps scale\n"
         "a/s - increase/decrease node label font size\n"
         "t/y - increase/decrease padding between layers\n" 
@@ -2141,45 +2388,60 @@ void manetGLView::showKeyboardShortcuts()
     TRACE_EXIT();
 }
 
+void manetGLView::spawnAboutBox()
+{
+    TRACE_ENTER();
+    WatcherAboutDialog *d = new WatcherAboutDialog;
+    d->show();
+    TRACE_EXIT();
+}
+
+void manetGLView::setGPSScale() 
+{
+    TRACE_ENTER();
+    bool ok;
+    double value=QInputDialog::getDouble(this, tr("GPS Scale"), tr("Plese enter the new GPS Scale value"), 
+            gpsScale, 1, DBL_MAX, 1, &ok);
+
+    if (ok) {
+        LOG_DEBUG("Setting GPS scale to " << value); 
+        gpsScale=value;
+
+        Config &cfg=SingletonConfig::instance();
+        SingletonConfig::lock();
+        libconfig::Setting &root=cfg.getRoot();
+        root["gpsScale"]=gpsScale;
+        SingletonConfig::unlock();
+    }
+    TRACE_EXIT();
+}
+
+void manetGLView::setEdgeWidth()
+{
+    TRACE_ENTER();
+
+    bool ok;
+    double value=QInputDialog::getDouble(this, tr("Set Edge Width"), tr("Plese enter the new Scale width for all edges"), 
+            2, 1, DBL_MAX, 1, &ok);
+
+    if (ok) {
+        LOG_DEBUG("Setting all edge widths to " << value); 
+        WatcherGraph::edgeIterator ei, eend;
+        for(tie(ei, eend)=edges(wGraph.theGraph); ei!=eend; ++ei)
+            wGraph.theGraph[*ei].displayInfo->width=value;
+    }
+
+    TRACE_EXIT();
+}
+
 void manetGLView::keyPressEvent(QKeyEvent * event)
 {
     TRACE_ENTER();
 
-    quint32 nativeKey = event->nativeVirtualKey();
     int qtKey = event->key();
+    Qt::KeyboardModifiers kbMods=event->modifiers();
 
-    switch (nativeKey)
-    {
-        case 'C':
-            {
-                LOG_DEBUG("Got cap C in keyPressEvent - spawning color chooser for background color"); 
-                QRgb rgb=0xffffffff;
-                bool ok=false;
-                rgb=QColorDialog::getRgba(rgb, &ok);
-                if (ok)
-                    glClearColor(qRed(rgb)/255.0, qGreen(rgb)/255.0, qBlue(rgb)/255.0, qAlpha(rgb)/255.0);
-            }
-            break;
-        case 'F': 
-            {
-                LOG_DEBUG("Got cap F in keyPressEvent - spawning font chooser for info string"); 
-                bool ok;
-                QFont initial(statusFontName.c_str(), statusFontPointSize); 
-                QFont font=QFontDialog::getFont(&ok, initial, this); 
-                if (ok)
-                {
-                    statusFontName=font.family().toStdString(); 
-                    statusFontPointSize=font.pointSize(); 
-                }
-            }
-            break;
-        case 'T':
-            layerPadding=0;
-            break;
-    }
-
-    switch(qtKey)
-    {
+    switch(qtKey) {
         case Qt::Key_Left:  shiftCenterRight(); break;
         case Qt::Key_Right: shiftCenterLeft(); break;
         case Qt::Key_Up:    shiftCenterDown(); break;
@@ -2194,18 +2456,66 @@ void manetGLView::keyPressEvent(QKeyEvent * event)
         case Qt::Key_X:     expandDistance(); break;
         case Qt::Key_E:     rotateX(-5.0); break;
         case Qt::Key_R:     rotateX(5.0); break;
-        case Qt::Key_D:     rotateY(-5.0); break;
-        case Qt::Key_F:     rotateY(5.0); break;
-        case Qt::Key_C:     rotateZ(-5.0); break;
+        case Qt::Key_D:     { 
+                                if (kbMods & Qt::ShiftModifier) { 
+
+                                    LOG_DEBUG("Got cap D turning on debugging info"); 
+                                    showDebugInfo=!showDebugInfo;
+                                    if (messageStream) { 
+                                        messageStream->messagesSent=0;
+                                        messageStream->messagesArrived=0;
+                                        messageStream->messagesDropped=0;
+                                    }
+                                }
+                                else 
+                                    rotateY(-5.0); break;
+                            }
+                            break;
+        case Qt::Key_F:
+                            if (kbMods & Qt::ShiftModifier) {
+
+                                LOG_DEBUG("Got cap F in keyPressEvent - spawning font chooser for info string"); 
+                                bool ok;
+                                QFont initial(statusFontName.c_str(), statusFontPointSize); 
+                                QFont font=QFontDialog::getFont(&ok, initial, this); 
+                                if (ok)
+                                {
+                                    statusFontName=font.family().toStdString(); 
+                                    statusFontPointSize=font.pointSize(); 
+                                }
+                            }
+                            else { 
+                                rotateY(5.0);
+                            }
+                            break; 
+        case Qt::Key_C:     { 
+                                if (kbMods & Qt::ShiftModifier) { 
+                                    LOG_DEBUG("Got cap C in keyPressEvent - spawning color chooser for background color"); 
+                                    QRgb rgb=0xffffffff;
+                                    bool ok=false;
+                                    rgb=QColorDialog::getRgba(rgb, &ok);
+                                    if (ok)
+                                        glClearColor(qRed(rgb)/255.0, qGreen(rgb)/255.0, qBlue(rgb)/255.0, qAlpha(rgb)/255.0);
+                                }
+                                else 
+                                    rotateZ(-5.0); 
+                            }
+                            break;
         case Qt::Key_V:     rotateZ(5.0); break;
         case Qt::Key_K:     gpsScale+=10; break;
         case Qt::Key_L:     gpsScale-=10; break;
-        case Qt::Key_T:     layerPadding+=2; break;
+        case Qt::Key_T:     {
+                                if (kbMods & Qt::ShiftModifier)  
+                                    layerPadding=0;
+                                else
+                                    layerPadding+=2; break;
+                            }
+                            break;
         case Qt::Key_Y:     layerPadding-=2; if (layerPadding<=0) layerPadding=0; break;
-        // case Qt::Key_B:     
-        //     layerToggle(BANDWIDTH_LAYER, isActive(BANDWIDTH_LAYER)); 
-        //     emit bandwidthToggled(isActive(BANDWIDTH_LAYER));
-        //     break;
+                            // case Qt::Key_B:     
+                            //     layerToggle(BANDWIDTH_LAYER, isActive(BANDWIDTH_LAYER)); 
+                            //     emit bandwidthToggled(isActive(BANDWIDTH_LAYER));
+                            //     break;
         case Qt::Key_Equal:
         case Qt::Key_Plus: 
                             autoCenterNodesFlag=true;
@@ -2226,10 +2536,134 @@ void manetGLView::keyPressEvent(QKeyEvent * event)
                             // case 'a' - 'a' + 1: arrowZoomOut(); break;
                             // case 's' - 'a' + 1: arrowZoomIn(); break;
                             // case 'r' - 'a' + 1: textZoomReset(); arrowZoomReset(); viewpointReset(); break;
+                            //
+        case Qt::Key_QuoteLeft:     {
+                                    matShine+=0.05; 
+                                    matShine=matShine>1.0 ? 1.0 : matShine; 
+                                    glMaterialf(GL_FRONT, GL_SHININESS, matShine);
+                            }
+                            break;
+        case Qt::Key_AsciiTilde: {
+                                    matShine-=0.05; 
+                                    matShine=matShine<0.0 ? 0.0 : matShine;
+                                    glMaterialf(GL_FRONT, GL_SHININESS, matShine);
+                            }
+                            break;
+        case Qt::Key_1:     {
+                                for (unsigned int i=0; i<3; i++) 
+                                    specReflection[i]+=0.05; 
+                                for (unsigned int i=0; i<3; i++) 
+                                    specReflection[i]=specReflection[i]>1.0 ? 1.0 : specReflection[i]; 
+                                glMaterialfv(GL_FRONT, GL_SPECULAR, specReflection);
+                            }
+                            break;
+        // there is no way to use Key_1 w/Shift - so we lose portability across keyboard layouts. 
+        case Qt::Key_Exclam: {
+                                for (unsigned int i=0; i<3; i++) 
+                                    specReflection[i]-=0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    specReflection[i]=specReflection[i]<0.0 ? 0.0 : specReflection[i]; 
+                                glMaterialfv(GL_FRONT, GL_SPECULAR, specReflection);
+                            }
+                            break;
+        case Qt::Key_2:     {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_SPECULAR;
+                                GLfloat *d=specLight0; 
+                                GLfloat o=0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_At: {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_SPECULAR;
+                                GLfloat *d=specLight0; 
+                                GLfloat o=-0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_3:     {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_DIFFUSE;
+                                GLfloat *d=diffLight0; 
+                                GLfloat o=0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_NumberSign: {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_DIFFUSE;
+                                GLfloat *d=diffLight0; 
+                                GLfloat o=-0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i];
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_4:     {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_AMBIENT;
+                                GLfloat *d=ambLight0; 
+                                GLfloat o=0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_Dollar: {
+                                GLenum l=GL_LIGHT0;
+                                GLenum p=GL_AMBIENT;
+                                GLfloat *d=ambLight0; 
+                                GLfloat o=-0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i];
+                                glLightfv(l, p, d); 
+                            }
+                            break;
+        case Qt::Key_5:     {
+                                GLenum l=GL_LIGHT_MODEL_AMBIENT;
+                                GLfloat *d=globalAmbientLight; 
+                                GLfloat o=0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightModelfv(l, d); 
+                            }
+                            break;
+        case Qt::Key_Percent: {
+                                GLenum l=GL_LIGHT_MODEL_AMBIENT;
+                                GLfloat *d=globalAmbientLight; 
+                                GLfloat o=-0.05;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]+=o;
+                                for (unsigned int i=0; i<3; i++) 
+                                    d[i]=d[i]>1.0 ? 1.0 : d[i]<0.0 ? 0.0 : d[i]; 
+                                glLightModelfv(l, d); 
+                            }
+                            break;
         case Qt::Key_Question:
         case Qt::Key_H:
-                                showKeyboardShortcuts();
-                                break;
+                            showKeyboardShortcuts();
+                            break;
 
         default:
                             event->ignore();
@@ -2319,9 +2753,7 @@ unsigned int manetGLView::getNodeIdAtCoords(const int x, const int y)
 
         unsigned int dist;
 
-        // Convert from GPS to 3d pixels
-        GLdouble gx, gy, gz;
-        gps2openGLPixels(node.gpsData->dataFormat, node.gpsData->x, node.gpsData->y, node.gpsData->z, gx, gy, gz);
+        GLdouble gx=node.gpsData->x, gy=node.gpsData->y, gz=node.gpsData->z;
 
         // Convert from 3d pixels to screen coords
         GLdouble sx, sy, sz;
@@ -2376,6 +2808,29 @@ void manetGLView::toggleNodeSelectedForGraph(unsigned int)
     // graph dialogs somehow. Add a little "G" or a little graph representation
     // above the node? 
     TRACE_EXIT();
+}
+
+void manetGLView::streamFilteringEnabled(bool isEnabled) 
+{
+    TRACE_ENTER();
+    LOG_DEBUG("Change in stream filtering. Filtering is now " << (isEnabled?"enabled":"disabled") << ".");
+
+    messageStreamFiltering=isEnabled;
+
+    BOOST_FOREACH(LayerListItemPtr &llip, knownLayers) {
+        if (messageStream) {
+            messageStream->enableFiltering(isEnabled); 
+            MessageStreamFilterPtr f(new MessageStreamFilter);
+            f->setLayer(llip->layer);
+            // If enabling filtering turn on all currently active filters
+            // else remove them all
+            if (isEnabled && llip->active)
+                messageStream->addMessageFilter(f);
+            else
+                messageStream->removeMessageFilter(f);
+        }
+    }
+    TRACE_EXIT(); 
 }
 
 void manetGLView::scrollingGraphActivated(QString graphName)
@@ -2465,16 +2920,23 @@ void manetGLView::layerToggle(const QString &layerName, const bool turnOn)
     GUILayer layer=layerName.toStdString();
 
     bool found=false;
-    BOOST_FOREACH(LayerListItemPtr &llip, knownLayers)
-    {
-        if (llip->layer==layer)
-        {
+    BOOST_FOREACH(LayerListItemPtr &llip, knownLayers) {
+        if (llip->layer==layer) {
             llip->active=turnOn;
             found=true;
+
+            if (messageStreamFiltering && messageStream) {
+                // Tell the watcherd that we want/don't want messages for this layer.
+                MessageStreamFilterPtr f(new MessageStreamFilter);
+                f->setLayer(llip->layer);
+                if (turnOn)
+                    messageStream->addMessageFilter(f);
+                else
+                    messageStream->removeMessageFilter(f);
+            }
         }
     }
-    if(!found)
-    {
+    if(!found) {
         LOG_DEBUG("Adding new layer to known layers: " << layer); 
         LayerListItemPtr item(new LayerListItem);
         item->layer=layer;
@@ -2520,17 +2982,27 @@ void manetGLView::toggleBackgroundImage(bool isOn)
     updateGL();
     TRACE_EXIT();
 }
+void manetGLView::toggleLoopPlayback(bool isOn) 
+{
+    TRACE_ENTER();
+    LOG_DEBUG("Toggling looped playback: " << (isOn==true?"on":"off"));
+    autorewind=isOn;
+    emit loopPlaybackToggled(isOn);
+    TRACE_EXIT();
+}
 
 void manetGLView::clearAll()
 {
     TRACE_ENTER();
+    boost::lock_guard<boost::mutex> l(graphMutex); // unlocks when it goes out of scope
     wGraph.theGraph.clear();
     TRACE_EXIT();
 }
+
 void manetGLView::clearAllEdges()
 {
     TRACE_ENTER();
-
+    boost::lock_guard<boost::mutex> l(graphMutex); // unlocks when it goes out of scope
     WatcherGraph::vertexIterator vi, viend, vj, vjend;
     for(tie(vi, viend)=vertices(wGraph.theGraph); vi!=viend; ++vi)
         clear_out_edges(*vi, wGraph.theGraph); 
@@ -2540,6 +3012,7 @@ void manetGLView::clearAllEdges()
 void manetGLView::clearAllLabels()
 {
     TRACE_ENTER();
+    boost::lock_guard<boost::mutex> l(graphMutex); // unlocks when it goes out of scope
     WatcherGraph::edgeIterator ei, eend;
     for(tie(ei, eend)=edges(wGraph.theGraph); ei!=eend; ++ei)
         if (wGraph.theGraph[*ei].labels.size())
@@ -2792,18 +3265,6 @@ void manetGLView::drawTeapot(GLdouble radius)
     }
 }
 
-void manetGLView::drawDisk(GLdouble radius)
-{
-    GLUquadric* q=NULL;
-
-    q=gluNewQuadric();
-    gluDisk(q,radius-1,radius,36,1);
-    gluDeleteQuadric(q);
-
-    glPopMatrix();
-}
-
-
 void manetGLView::drawTorus(GLdouble inner, GLdouble outer)
 {
     if (threeDView)
@@ -2826,13 +3287,19 @@ void manetGLView::drawSphere(GLdouble radius)
 {
     if (threeDView)
     {
-        glPushAttrib(GL_NORMALIZE);
-        glNormal3f(0.0, 0.0, 1.0);
-        glutSolidSphere(radius, 10, 10);
-        glPopAttrib();
+        GLUquadricObj *quadric=gluNewQuadric();
+        gluQuadricNormals(quadric, GLU_SMOOTH);
+        glPushMatrix();
+        gluSphere(quadric, radius, 15, 15);
+        glPopMatrix();
+        gluDeleteQuadric(quadric);
     }
-    else
-        drawDisk(radius); 
+    else {
+        GLUquadric* q=NULL;
+        q=gluNewQuadric();
+        gluDisk(q,radius-1,radius,36,1);
+        gluDeleteQuadric(q);
+    }
 }
 
 void manetGLView::drawCircle(GLdouble radius)
@@ -2904,7 +3371,9 @@ void manetGLView::saveConfiguration()
             { "showWallTime", showWallTimeinStatusString }, 
             { "showPlaybackTime", showPlaybackTimeInStatusString },
             { "showPlaybackRange", showPlaybackRangeString },
-            { "autorewind", autorewind }
+            { "showDebugInfo", showDebugInfo },
+            { "autorewind", autorewind },
+            { "messageStreamFiltering", messageStreamFiltering }
         };
 
         for (size_t i = 0; i < sizeof(boolConfigs)/sizeof(boolConfigs[0]); i++)
@@ -2986,15 +3455,15 @@ void manetGLView::saveConfiguration()
         for (size_t i=0; i<sizeof(longlongIntVals)/sizeof(longlongIntVals[0]); i++)
             root[longlongIntVals[i].prop]=*longlongIntVals[i].val;
 
-        root["viewPoint"]["angle"][0]=manetAdj.angleX;
-        root["viewPoint"]["angle"][1]=manetAdj.angleY;
-        root["viewPoint"]["angle"][2]=manetAdj.angleZ;
-        root["viewPoint"]["scale"][0]=manetAdj.scaleX;
-        root["viewPoint"]["scale"][1]=manetAdj.scaleY;
-        root["viewPoint"]["scale"][2]=manetAdj.scaleZ;
-        root["viewPoint"]["shift"][0]=manetAdj.shiftX;
-        root["viewPoint"]["shift"][1]=manetAdj.shiftY;
-        root["viewPoint"]["shift"][2]=manetAdj.shiftZ;
+        root["viewPoint"]["angle"][0]=fpclassify(manetAdj.angleX)==FP_NAN ? 0.0 : manetAdj.angleX;
+        root["viewPoint"]["angle"][1]=fpclassify(manetAdj.angleY)==FP_NAN ? 0.0 : manetAdj.angleY;
+        root["viewPoint"]["angle"][2]=fpclassify(manetAdj.angleZ)==FP_NAN ? 0.0 : manetAdj.angleZ;
+        root["viewPoint"]["scale"][0]=fpclassify(manetAdj.scaleX)==FP_NAN ? 0.0 : manetAdj.scaleX;
+        root["viewPoint"]["scale"][1]=fpclassify(manetAdj.scaleY)==FP_NAN ? 0.0 : manetAdj.scaleY;
+        root["viewPoint"]["scale"][2]=fpclassify(manetAdj.scaleZ)==FP_NAN ? 0.0 : manetAdj.scaleZ;
+        root["viewPoint"]["shift"][0]=fpclassify(manetAdj.shiftX)==FP_NAN ? 0.0 : manetAdj.shiftX;
+        root["viewPoint"]["shift"][1]=fpclassify(manetAdj.shiftY)==FP_NAN ? 0.0 : manetAdj.shiftY;
+        root["viewPoint"]["shift"][2]=fpclassify(manetAdj.shiftZ)==FP_NAN ? 0.0 : manetAdj.shiftZ;
 
         BackgroundImage &bg=BackgroundImage::getInstance();
         float bgfloatVals[5];
@@ -3029,22 +3498,37 @@ void manetGLView::saveConfiguration()
 void manetGLView::pausePlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     playbackPaused=true;
+//    messageStream->clearMessageCache();
     messageStream->stopStream(); 
     TRACE_EXIT();
 }
 void manetGLView::normalPlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     playbackPaused=false;
     playbackSetSpeed(1.0);
+    messageStream->clearMessageCache();
     messageStream->startStream(); 
     TRACE_EXIT();
 }
 void manetGLView::reversePlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     pausePlayback(); 
+    messageStream->clearMessageCache();
     if (streamRate!=0.0)
     {
         if (streamRate<0.0)
@@ -3059,7 +3543,12 @@ void manetGLView::reversePlayback()
 void manetGLView::forwardPlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     pausePlayback(); 
+    messageStream->clearMessageCache();
     if (streamRate!=0.0)
     {
         if (streamRate>0.0)
@@ -3074,7 +3563,12 @@ void manetGLView::forwardPlayback()
 void manetGLView::rewindToStartOfPlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     pausePlayback(); 
+    messageStream->clearMessageCache();
     messageStream->setStreamTimeStart(SeekMessage::epoch); 
     if (streamRate<0.0)
         normalPlayback();
@@ -3088,7 +3582,12 @@ void manetGLView::rewindToStartOfPlayback()
 void manetGLView::forwardToEndOfPlayback()
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
     pausePlayback(); 
+    messageStream->clearMessageCache();
     messageStream->setStreamTimeStart(SeekMessage::eof); 
     playbackSetSpeed(1.0);
     playbackPaused=false;
@@ -3101,10 +3600,19 @@ void manetGLView::forwardToEndOfPlayback()
 void manetGLView::playbackSetSpeed(double x)
 {
     TRACE_ENTER();
+    if (!messageStream) {
+        TRACE_EXIT();
+        return;
+    }
+    if ((streamRate>0.0 && x<0.0) || (streamRate<0.0 && x>0.0)) {
+            boost::lock_guard<boost::mutex> l(graphMutex); // unlocks when goes out of scope.
+            wGraph.setTimeDirectionForward(x>0.0?true:false); 
+    }
     LOG_DEBUG("Setting stream rate to " << x); 
     streamRate=x;
     messageStream->setStreamRate(streamRate);
     emit streamRateSet(streamRate);
     TRACE_EXIT();
 }
+
 

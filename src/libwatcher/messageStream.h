@@ -147,9 +147,17 @@ namespace watcher
          * Once set, the stream will only contist of messages which pass the filter. More than
          * one filter can be added and the filters are additive. 
          * @param filter the filter to apply to the stream. 
-         * @retval true
+         * @retval true if watcherd notifed of new filter
          */
-        bool addMessageFilter(const MessageStreamFilter &filter);
+        bool addMessageFilter(const MessageStreamFilterPtr filter);
+
+        /** 
+         * This method removes a previously applied filter
+         */
+        bool removeMessageFilter(const MessageStreamFilterPtr filter);
+
+        /** Turns filtering on or off. Returns previous value */
+        bool enableFiltering(bool enable); 
 
         /**
          * Causes the server to respond with a PlaybackTimeRange message at some point in the 
@@ -179,6 +187,18 @@ namespace watcher
          */
         bool connect();
 
+        /**
+         * Clear the message cache. Can be used to clear the cache if the GUI is overloaded
+         * or knowns that it does not need the cached data.
+         */
+        void clearMessageCache(); 
+
+        // Bookkeeping
+        unsigned int messagesSent;
+        unsigned int messagesArrived;
+        unsigned int messagesDropped;
+        unsigned int messageQueueSize() { return messageCache.size(); }
+
         protected:
 
         /**
@@ -202,11 +222,6 @@ namespace watcher
         virtual bool handleMessageSent(const event::MessagePtr &message); 
         virtual bool handleMessagesSent(const std::vector<event::MessagePtr> &messages);
 
-        // Bookkeeping
-        unsigned int messagesSent;
-        unsigned int messagesArrived;
-        unsigned int messagesDropped;
-
         private:
         DECLARE_LOGGER();
 
@@ -217,6 +232,7 @@ namespace watcher
         typedef MessageStreamFilterList::iterator MessageStreamFilterListIterator;
         typedef MessageStreamFilterList::const_iterator MessageStreamFilterListConstIterator;
         MessageStreamFilterList messageStreamFilters;
+        bool messageFilteringEnabled;
 
         float streamRate;
         Timestamp streamStartTime;

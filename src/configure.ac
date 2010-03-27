@@ -2,8 +2,8 @@ AC_INIT(watcher, 0.6)
 AM_INIT_AUTOMAKE([foreign])
 AC_PROG_CC
 AC_PROG_CXX
-AC_PROG_RANLIB
 AC_PROG_LIBTOOL
+PKG_PROG_PKG_CONFIG
 
 # Boost 1.36 is when asio appeared
 AX_BOOST_BASE(1.36)
@@ -14,6 +14,9 @@ AX_BOOST_REGEX
 AX_BOOST_THREAD
 AX_BOOST_UNIT_TEST_FRAMEWORK
 AX_BOOST_DATE_TIME
+AX_BOOST_PROGRAM_OPTIONS
+
+PKG_CHECK_MODULES(LOGGER, logger)
 
 # allow optional 'test node only' build which builds just test node components.
 AC_MSG_CHECKING(--enable-testnodeonly)
@@ -54,10 +57,10 @@ if test x$enable_testnodeonly == xno; then
     AX_PATH_LIB(libconfig.h)
 
     # check for recent version of sqlite3
-    AC_MSG_CHECKING([for sqlite3 >= 3.6.10])
+    AC_MSG_CHECKING([for sqlite3 >= 3.5.9])
     AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[@%:@include <sqlite3.h>
 		]],
-        [[#if SQLITE_VERSION_NUMBER >= 3006010
+        [[#if SQLITE_VERSION_NUMBER >= 3005009
     //OK
     #else
     #  error sqlite version is too old
@@ -84,6 +87,42 @@ if test x$enable_testnodeonly == xno; then
     AC_MSG_RESULT($enable_watcher3d)
     AM_CONDITIONAL([ENABLE_WATCHER3D], [test x$enable_watcher3d != xno])
 
+    # allow optional disabling of earthWatcher
+    AC_MSG_CHECKING(--enable-earthWatcher)
+    AC_ARG_ENABLE(earthWatcher,
+	      [AS_HELP_STRING([--enable-earthWatcher],[enable compilation of earthWatcher])],
+	      [enable_earthWatcher=$enableval],
+          [enable_earthWatcher="no"])
+    AC_MSG_RESULT($enable_earthWatcher)
+    AM_CONDITIONAL([ENABLE_EARTHWATCHER], [test x$enable_earthWatcher != xno])
+
+    ac_cv_kml=no
+    AC_ARG_WITH([kml], 
+                [AS_HELP_STRING([--with-kml=PREFIX],[use the libkml installed in the PREFIX directory])],
+    	    	[ac_cv_kml=$withval])
+
+    if test x$enable_earthWatcher != xno; then
+	    AC_MSG_CHECKING(for libkml)
+	    if test x$ac_cv_kml = xno; then
+		    #not specified by the user, look in the standard locations
+		    for d in /usr /usr/local; do
+			    if test -d $d/include/kml; then
+				    ac_cv_kml=$d
+			    fi
+		    done
+	    fi
+	    if test x$ac_cv_kml = xno; then
+		    AC_MSG_ERROR("unable to locate libkml")
+	    fi
+	    AC_MSG_RESULT($ac_cv_kml)
+	    KML_INCLUDES="-I$ac_cv_kml/include"
+	    KML_LDFLAGS="-L$ac_cv_kml/lib"
+	    KML_LDADD="-lkmlbase -lkmlconvenience -lkmlengine -lkmldom"
+	    AC_SUBST(KML_INCLUDES)
+	    AC_SUBST(KML_LDFLAGS)
+	    AC_SUBST(KML_LDADD)
+    fi
+
     # OGRE, OIS, and CEGUI
     if test x$enable_ogreWatcher != xno; then
         AC_DEFINE(FEAT_OGREWATCHER)
@@ -105,34 +144,23 @@ if test x$enable_testnodeonly == xno; then
         # AC_SUBST(CEGUI-OGRE_LIBS)
     fi
 
-    # qmake-qt4 seems to set the correct includes and libs, we just need to determine where it is for the QWT detection
-    AC_MSG_CHECKING(for qt4)
-    ac_cv_qt=
-    if test -d /usr/local/include/qt; then
-        AC_MSG_RESULT(/usr/local/include/qt)
-    #    QT4_INCLUDES="/usr/local/include/qt"
-    #    QT4_LIBS="-L/usr/local/lib"
-    #    ac_cv_qt_dir=/usr/local/lib
-    elif test -d /usr/include/qt4; then
-        AC_MSG_RESULT(/usr/include/qt4)
-    #    QT4_INCLUDES="/usr/include/qt4"
-        ac_cv_qt='-qt4'
-    #    ac_cv_qt_dir=/usr/lib
-    elif test -d /usr/include/qt; then
-        AC_MSG_RESULT(/usr/include/qt)
-    #    QT4_INCLUDES="/usr/include/qt4"
-    #    ac_cv_qt_dir=/usr/lib
-    elif test -d /usr/include/Qt; then
-        AC_MSG_RESULT(/usr/include)
-    else
-        AC_MSG_ERROR(not found)
-    fi
-    #if test -f ${ac_cv_qt_dir}/libqt-mt.so; then
-    #    QT4_LIBS="$QT4_LIBS -lqt-mt"
-    #else
-    #    QT4_LIBS="$QT4_LIBS -lqt"
-    #fi
-    
+	# qmake-qt4 seems to set the correct includes and libs, we just need to determine where it is for the QWT detection
+    # if we can't find it, assume that it is already set in CXXFLAGS, LDFLAGS, etc...
+	AC_MSG_CHECKING(for qt4)
+	ac_cv_qt=
+	if test -d /usr/local/include/qt; then
+	    AC_MSG_RESULT(/usr/local/include/qt)
+	elif test -d /usr/include/qt4; then
+	    AC_MSG_RESULT(/usr/include/qt4)
+	    ac_cv_qt='-qt4'
+	elif test -d /usr/include/qt; then
+	    AC_MSG_RESULT(/usr/include/qt)
+	elif test -d /usr/include/Qt; then
+	    AC_MSG_RESULT(/usr/include)
+	else
+        AC_MSG_WARN([Did not find QT4 in "standard" locations. QT4 LDFLAGS and CFLAGS must be given in environment variables.])
+	fi
+	
     AC_MSG_CHECKING(for qwt)
     if test -d include/qwt; then
         AC_MSG_RESULT(./include/qwt)
@@ -147,9 +175,9 @@ if test x$enable_testnodeonly == xno; then
         QWT_INCLUDES="/usr/include/qwt${ac_cv_qt}"
         QWT_LIB="-lqwt${ac_cv_qt}"
     else
-        AC_MSG_ERROR(not found)
+        AC_MSG_WARN([Did not find QWT in "standard" locations. QWT LDFLAGS and CFLAGS must be given in environment variables.])
     fi
-    
+
     AC_SUBST(QWT_INCLUDES)
     AC_SUBST(QWT_LIB)
 
@@ -170,18 +198,24 @@ AC_ARG_ENABLE(hierarchy_client,
 AM_CONDITIONAL([ENABLE_HIERARCHY_CLIENT], [test x$enable_hierarchy_client != xno])
 AC_MSG_RESULT($enable_hierarchy_client)
 
+if test x$enable_hierarchy_client != xno; then
+    PKG_CHECK_MODULES(idsCommunications, idsCommunications >= 1.0)
+    PKG_CHECK_MODULES(LIBIDMEF, libidmef = 0.7.3-beta-McAfee20050325)
+fi
+
 AC_CONFIG_FILES([ \
     Makefile \
-    logger/Makefile \
-    logger/logger.pc \
     util/Makefile \
     libwatcher/Makefile \
     libwatcher/watcher.pc \
     libwatcher/watchermsg.pc \
+    util/watcherutils.pc \
     libwatcher/test/Makefile \
     clients/Makefile \
     clients/routeFeeder/Makefile \
-    clients/commandlineFeeders/Makefile 
+    clients/commandlineFeeders/Makefile \
+    clients/randomScenario/Makefile
+
 ])
 
 if test x$enable_testnodeonly == xno; then
@@ -204,6 +238,10 @@ fi
 
 if test x$enable_hierarchy_client != xno; then
     AC_CONFIG_FILES([clients/watcherHierarchyClient/Makefile])
+fi
+
+if test x$enable_earthWatcher != xno; then
+    AC_CONFIG_FILES([clients/earthWatcher/Makefile])
 fi
 
 AC_OUTPUT

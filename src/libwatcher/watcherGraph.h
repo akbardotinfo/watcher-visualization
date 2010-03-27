@@ -26,6 +26,7 @@
 
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/adjacency_list.hpp>
+#include <boost/function.hpp>
 
 #include "watcherGraphNode.h"
 #include "watcherGraphEdge.h"
@@ -81,14 +82,8 @@ namespace watcher
              * The graph is a boost directed adjacency_list. This interface is public
              * so GUI developers can get direct access if needed. 
              */
-                // struct watcher_vertex_t { typedef boost::vertex_property_tag kind; };
-                // struct watcher_edge_t { typedef boost::edge_property_tag kind; };
-
-                // typedef boost::property<watcher_vertex_t, WatcherGraphNode> VertexProperty;
-                // typedef boost::property<watcher_edge_t, WatcherGraphEdge> EdgeProperty;
-
                 typedef boost::adjacency_list<
-                    boost::listS, 
+                    boost::listS,               // may want to make this a set
                     boost::vecS, 
                     boost::directedS,
                     WatcherGraphNode, 
@@ -101,6 +96,7 @@ namespace watcher
                 typedef boost::graph_traits<Graph>::edge_descriptor    edge;
                 typedef boost::graph_traits<Graph>::edges_size_type    edgeInt;
                 typedef boost::graph_traits<Graph>::edge_iterator      edgeIterator;
+                typedef boost::graph_traits<Graph>::out_edge_iterator  outEdgeIterator;
 
             /**
              * The actual boost::graph.
@@ -126,6 +122,15 @@ namespace watcher
              * @return if the graph was updated then true, else false.
              */
             bool updateGraph(const MessagePtr &message);
+
+            /**
+             * If you want your GPS coords in watcherGraph to be in a different 
+             * unit (say OpenGL screen coords), set this function pointer and 
+             * watcherGraph will use it to translate all incoming GPS data into
+             * your unit.
+             */
+            typedef boost::function<bool (watcher::event::GPSMessagePtr &m)> LocationTranslateFunction;
+            LocationTranslateFunction locationTranslationFunction;
 
             /**
              * Applies the passed filter to the in-memory graph. Read details below. 
@@ -162,9 +167,21 @@ namespace watcher
 
              /**
               * Update Graph internals (component experations, etc). 
-              * Should be called periodically.
+              * Should be called periodically. If a timestamp is given,
+              * use that for current time.
               */
-            void doMaintanence();
+            void doMaintanence(const watcher::Timestamp &ts=0);
+
+            /**
+             * If you're using playback time for doMaintanence(), then you must 
+             * notify watcherGraph of the direction of time so it can compute
+             * expirations correctly. If the direction changes, then there are 
+             * no current events as nothing has happened yet, so the entire 
+             * graph is cleared. Note: clients who use threads to read/update the
+             * graph must insure that there is only one thread accessing the 
+             * graph when it clears itself. 
+             */
+            void setTimeDirectionForward(bool forward); 
 
             /** Find a node in the graph based on a NodeIdentifier 
              * @param[in] id the id of the node you want to find. 
@@ -172,7 +189,7 @@ namespace watcher
              * @retval true if successful
              * @retval false otherwise
              */
-            bool findNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retVal);
+            bool findNode(const NodeIdentifier &id, vertexIterator &retVal);
 
             /**
              * Save current configuration of all labels, nodes, and edges to the SingletonCconfig 
@@ -205,10 +222,6 @@ namespace watcher
               * Unserialize a Graph from a stream
               */
              // WatcherGraphPtr unpack(std::istream& is);
-
-            /**
-             * Get current time in milliseconds
-             */
 
         protected:
 
@@ -260,14 +273,17 @@ namespace watcher
              * @param[in] layer - if the node is created, load this layers display information into it. 
              * @return bool - true if successful, false otherwise
              */
-            bool findOrCreateNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retIter, const GUILayer &layer);
+            bool findOrCreateNode(const NodeIdentifier &id, vertexIterator &retIter, const GUILayer &layer);
 
             /** Create a node and return an iterator to it. 
              * @param[in] id - the id of the node you want to create. 
              * @param[out] retIter - an iterator that points to the found node.
              * @return bool - true if successful, false otherwise
              */
-            bool createNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retIter);
+            bool createNode(const NodeIdentifier &id, vertexIterator &retIter);
+
+            /** Keep track of which direction we're going in time. */
+            bool timeForward;
 
     }; // like a fired school teacher.
 

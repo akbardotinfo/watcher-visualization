@@ -192,6 +192,8 @@ share/info/dir
 
 ^src/util/Makefile
 ^src/logger/Makefile
+^src/logger/configure
+^src/logger/libtool
 
 ^src/sqlite_wrapper/Makefile$
 
@@ -264,6 +266,12 @@ share/info/dir
 #
 ^src/clients/ogreWatcher/Makefile
 ^src/clients/ogreWatcher/ogreWatcher
+
+#
+# Google Earth Watcher GUI
+#
+^src/clients/earthWatcher/Makefile
+^src/clients/earthWatcher/earthWatcher
 
 #
 # ignore latex temp files.

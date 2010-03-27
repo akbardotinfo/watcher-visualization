@@ -27,6 +27,7 @@
 #include <string>
 #include <QtGui/QMainWindow>
 #include "declareLogger.h"
+#include "ui_watcher.h"
 
 namespace watcher
 {

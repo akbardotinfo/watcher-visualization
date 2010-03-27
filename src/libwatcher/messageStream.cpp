@@ -24,6 +24,7 @@
 #include "libwatcher/seekWatcherMessage.h"
 #include "libwatcher/speedWatcherMessage.h"
 #include "libwatcher/playbackTimeRange.h"
+#include "libwatcher/messageStreamFilterMessage.h"
 #include "logger.h"
 
 using namespace watcher;
@@ -154,14 +155,31 @@ bool MessageStream::isStreamReadable() const
     return retVal;
 }
 
-bool MessageStream::addMessageFilter(const MessageStreamFilter & /*filter*/)
+bool MessageStream::addMessageFilter(const MessageStreamFilterPtr filter)
 {
     TRACE_ENTER();
-    
-    assert(0);  // filters are not supported yet. 
+    MessageStreamFilterMessagePtr mess(new MessageStreamFilterMessage(*filter));
+    mess->applyFilter=true;
+    mess->enableAllFiltering=messageFilteringEnabled;
+    bool retVal=connection->sendMessage(mess);
+    TRACE_EXIT_RET_BOOL(retVal); 
+    return retVal;
+}
 
-    TRACE_EXIT_RET("true");
-    return true;
+bool MessageStream::removeMessageFilter(const MessageStreamFilterPtr filter)
+{
+    TRACE_ENTER();
+    MessageStreamFilterMessagePtr mess(new MessageStreamFilterMessage(*filter));
+    mess->applyFilter=false;
+    mess->enableAllFiltering=messageFilteringEnabled;
+    bool retVal=connection->sendMessage(mess);
+    TRACE_EXIT_RET_BOOL(retVal); 
+    return retVal;
+}
+bool MessageStream::enableFiltering(bool enable) {
+    bool retVal=messageFilteringEnabled;
+    messageFilteringEnabled=enable;
+    return retVal;
 }
 
 bool MessageStream::getMessageTimeRange() const
@@ -211,7 +229,7 @@ bool MessageStream::handleMessageArrive(ConnectionPtr conn, const MessagePtr &me
         // messagesDropped++;
         // TRACE_EXIT_RET_BOOL(false);
         // return false;
-        usleep(100000);
+        // usleep(100000);
     }
 
     // We don't really add anything yet to a generic watcherdAPI client.
@@ -268,6 +286,19 @@ bool MessageStream::handleMessagesSent(const vector<MessagePtr> &messages)
 
     TRACE_EXIT_RET((retVal==true?"true":"false"));
     return retVal;
+}
+
+void MessageStream::clearMessageCache()
+{
+    TRACE_ENTER();
+    {
+        lock_guard<mutex> lock(messageCacheMutex);
+        messagesDropped+=messageCache.size();
+        messageCache.clear();
+        readReady=false;
+        // let lock go out of scope
+    }
+    TRACE_EXIT();
 }
 
 std::ostream &watcher::operator<<(std::ostream &out, const MessageStream & /*messStream*/)

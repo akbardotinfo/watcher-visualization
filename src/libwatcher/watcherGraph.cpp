@@ -63,12 +63,10 @@ namespace watcher {
             const NodeIdentifier &id;
             public:
             MatchNodeId(const WatcherGraph::Graph &g_, const NodeIdentifier &id_) : g(g_), id(id_) {}
-            bool operator()(boost::graph_traits<WatcherGraph::Graph>::vertex_descriptor const &v)
-            {
+            bool operator()(const WatcherGraph::vertex &v) {
                 return g[v].nodeId == id;
             }
         }; // class MatchNodeId
-
         struct MatchMessageLabelPtr
         {
             MatchMessageLabelPtr(const LabelMessagePtr &l_) : l(l_) {} 
@@ -89,38 +87,23 @@ namespace watcher {
                 return l == lhs->layer;
             }
         };
-        struct LabelMessageExpired 
-        {
-            LabelMessageExpired(const Timestamp &t) : now(t) {}
-            const Timestamp now;
-            bool operator()(const LabelMessagePtr &lhs)
-            {
-                LOG_DEBUG("LabelMessageExpired - " << lhs->expiration << " vs. " << now << " == " << (((lhs->expiration == Infinity) ? false : (now > lhs->expiration))?"true":"false")); 
-                return (lhs->expiration == Infinity) ? false : (now > lhs->expiration); 
-            }
-        };
         struct LabelExpired
         {
-            LabelExpired(const Timestamp &t) : now(t) {}
+            LabelExpired(const Timestamp &t, bool timeForward) : now(t), direction(timeForward) {}
             const Timestamp now;
-            bool operator()(const LabelDisplayInfoPtr &lhs)
-            {
-                return (lhs->expiration == Infinity) ? false : (now > lhs->expiration); 
+            const bool direction;
+            bool operator()(const LabelDisplayInfoPtr &lhs) {
+                return (lhs->expiration == Infinity) ? false : direction ? (now > lhs->expiration) : (now < lhs->expiration);
             }
         };
         struct EdgeExpired
         {
-            EdgeExpired(const WatcherGraph::Graph &g_, const Timestamp &t_) : g(g_), t(t_) {}
+            EdgeExpired(const WatcherGraph::Graph &g_, const Timestamp &t_, bool timeForward) : g(g_), t(t_), direction(timeForward) {}
             const WatcherGraph::Graph &g;
             const Timestamp &t;
-            bool operator()(boost::graph_traits<WatcherGraph::Graph>::edge_descriptor const &e)
-            {
-                // bool retVal=(g[e].expiration==Infinity) ? false : (t > g[e].expiration);
-                // if (retVal==true) 
-                //     LOG_DEBUG("Found expired edge: exp: " << g[e].expiration << " t:" << t << " layer:" << g[e].displayInfo->layer);
-                // else
-                //     LOG_DEBUG("Found unexpired edge: exp: " << g[e].expiration << " t:" << t << " layer:" << g[e].displayInfo->layer);
-                return (g[e].expiration==Infinity) ? false : (t > g[e].expiration); 
+            const bool direction;
+            bool operator()(const WatcherGraph::edge &e) {
+                return (g[e].expiration==Infinity) ? false : direction ? (t > g[e].expiration) : (t < g[e].expiration); 
             }
         };
         struct MatchEdgeLayer
@@ -128,10 +111,40 @@ namespace watcher {
             const WatcherGraph::Graph &g;
             const GUILayer &layer;
             MatchEdgeLayer(const WatcherGraph::Graph &g_, const GUILayer &l_) : g(g_), layer(l_) {}
-            bool operator()(const boost::graph_traits<WatcherGraph::Graph>::edge_descriptor &e)
+            bool operator()(const WatcherGraph::edge &e)
             {
                 // LOG_DEBUG("MatchEdgeLayer: " << g[e].displayInfo->layer << " == " << layer << " is " << (g[e].displayInfo->layer==layer?"true":"false")); 
                 return g[e].displayInfo->layer==layer;
+            }
+        };
+        struct MatchEdgeLayerAndTargetNodeId
+        {
+            const WatcherGraph::Graph &g;
+            const GUILayer &layer;
+            const NodeIdentifier &id;
+            MatchEdgeLayerAndTargetNodeId(
+                    const WatcherGraph::Graph &g_, 
+                    const GUILayer &l_,
+                    const NodeIdentifier &n_) : g(g_), layer(l_), id(n_) {} 
+            bool operator()(const WatcherGraph::edge &e) {
+                return g[e].displayInfo->layer==layer && g[target(e, g)].nodeId==id;
+            }
+        };
+        struct MatchEdgeLayerAndNodeIds
+        {
+            const WatcherGraph::Graph &g;
+            const GUILayer &layer;
+            const NodeIdentifier &id1, &id2;
+            MatchEdgeLayerAndNodeIds(
+                    const WatcherGraph::Graph &g_, 
+                    const GUILayer &l_,
+                    const NodeIdentifier &n1_,
+                    const NodeIdentifier &n2_) : g(g_), layer(l_), id1(n1_), id2(n2_) {} 
+            bool operator()(const WatcherGraph::edge &e) {
+                return 
+                    g[e].displayInfo->layer==layer && 
+                    g[source(e, g)].nodeId==id1 &&
+                    g[target(e, g)].nodeId==id2;
             }
         };
 
@@ -154,7 +167,7 @@ namespace watcher {
 
                 out << label.str(); 
                 out << " color=" << g[v].displayInfo->color.toString();
-                
+
                 out << "]"; 
             }
         };
@@ -185,7 +198,7 @@ namespace watcher {
     }
 }
 
-WatcherGraph::WatcherGraph()
+WatcherGraph::WatcherGraph() : timeForward(true)
 {
     TRACE_ENTER();
     TRACE_EXIT();
@@ -198,6 +211,24 @@ WatcherGraph::~WatcherGraph()
     TRACE_EXIT();
 }
 
+void WatcherGraph::setTimeDirectionForward(bool forward)
+{
+    //
+    // If we're changing direction - clear everything but the nodes on the assumption
+    // that it doesn't exist yet. This may be a false assumption for things with 
+    // infinite duration - or it may not, depending. To be on the safe side (or the 
+    // easier side in any case), just clear them. (Note nodes always exist.) 
+    //
+    if (timeForward!=forward) {
+        vertexIterator vi, viend, vj, vjend;
+        for(tie(vi, viend)=vertices(theGraph); vi!=viend; ++vi) {
+            theGraph[*vi].labels.clear();
+            clear_out_edges(*vi, theGraph);  // will clear labels attached to the edges.
+        }
+    }
+    timeForward=forward;
+}
+
 bool WatcherGraph::addNodeNeighbors(const ConnectivityMessagePtr &message)
 {
     TRACE_ENTER();
@@ -208,25 +239,59 @@ bool WatcherGraph::addNodeNeighbors(const ConnectivityMessagePtr &message)
 
     bool retVal=true;
 
-    // GTL - find a better way to do this than removing all the edges, then 
-    // adding them back. Do: 
-    //     Find the intersection of the sets of the est of existing neighbors
-    //     and the set of neighbors in the message. Then make sure that 
-    //     the intersection of nodes exist. 
-    
-    graph_traits<Graph>::vertex_iterator src;
+    // First add all new (not-existing) edges, then remove edges that have disappeared.
+    vertexIterator src, dst;
+    outEdgeIterator e, e_end;
     findOrCreateNode(message->fromNodeID, src, message->layer); 
-    remove_out_edge_if(*src, GraphFunctors::MatchEdgeLayer(theGraph, message->layer), theGraph);
 
-    // Add edges from connectivity message
-    graph_traits<Graph>::vertex_iterator dest;
-    BOOST_FOREACH(NodeIdentifier nid, message->neighbors)
-    {
-        findOrCreateNode(nid, dest, message->layer); 
-        std::pair<graph_traits<Graph>::edge_descriptor, bool> ei=add_edge(*src, *dest, theGraph);
-        theGraph[ei.first].displayInfo->loadConfiguration(message->layer); 
+    // add new edges.
+    BOOST_FOREACH(NodeIdentifier nid, message->neighbors) {
+        for (tie(e, e_end)=out_edges(*src, theGraph); e!=e_end; ++e) 
+            if (theGraph[target(*e, theGraph)].nodeId==nid) 
+                if (theGraph[*e].displayInfo->layer==message->layer) 
+                    break;
+
+        if (e!=e_end)  // found it
+            continue;
+
+        LOG_DEBUG("Adding new edge between " << message->fromNodeID.to_string() << " and " << nid.to_string()); 
+
+        findOrCreateNode(nid, dst, message->layer); 
+        std::pair<graph_traits<Graph>::edge_descriptor, bool> ei=add_edge(*src, *dst, theGraph);
+        if (ei.second)
+            theGraph[ei.first].displayInfo->loadConfiguration(message->layer); 
+
     }
-    
+
+    // remove missing edges
+    LOG_DEBUG("Removing missing out edges from " << message->fromNodeID.to_string()); 
+    outEdgeIterator next;
+    tie(e, e_end)=out_edges(*src, theGraph);
+    for (next=e; e!=e_end; e=next) {
+        next++;
+        LOG_DEBUG("Seeing if out edge " << theGraph[target(*e, theGraph)].nodeId.to_string() << " is missing."); 
+        bool found=false;
+        BOOST_FOREACH(NodeIdentifier nid, message->neighbors) {
+            LOG_DEBUG("Scanning for missing destination edge " << nid.to_string());
+            if (theGraph[target(*e, theGraph)].nodeId==nid) { 
+                LOG_DEBUG("Found missing edge, seeing if it's on the correct layer");
+                if (theGraph[*e].displayInfo->layer==message->layer) {
+                    LOG_DEBUG("Found missing edge on the correct layer, will not remove it.");
+                    found=true;
+                    break;
+                }
+            }
+        }
+
+        if (found) // found it so it's not missing. 
+            continue;
+
+        if (theGraph[*e].displayInfo->layer==message->layer) {
+            LOG_DEBUG("Removing missing edge between " << message->fromNodeID.to_string() << " and " << theGraph[target(*e, theGraph)].nodeId << " on layer " << message->layer);
+            remove_edge(e, theGraph);
+        }
+    }
+
     // THis is expensive.
     // LOG_DEBUG("Graph after adding: " << *this); 
 
@@ -243,6 +308,10 @@ bool WatcherGraph::addEdge(const EdgeMessagePtr &message)
     findOrCreateNode(message->node1, src, message->layer); 
     findOrCreateNode(message->node2, dest, message->layer); 
 
+    // only one edge per layer allowed, remove old one if there
+    // 
+    remove_edge_if(GraphFunctors::MatchEdgeLayerAndNodeIds(theGraph, message->layer, message->node1, message->node2), theGraph); 
+
     std::pair<graph_traits<Graph>::edge_descriptor, bool> ei=add_edge(*src, *dest, theGraph);
 
     if(!ei.second) 
@@ -252,12 +321,13 @@ bool WatcherGraph::addEdge(const EdgeMessagePtr &message)
         return false;
     }
 
-    Timestamp now=getCurrentTime();
-
     // Set expiration on this edge if needed. 
     if (message->expiration!=Infinity) {
         Timestamp oldExp=theGraph[ei.first].expiration;
-        theGraph[ei.first].expiration=now+message->expiration;  
+        if (timeForward) 
+            theGraph[ei.first].expiration=message->timestamp+message->expiration;  
+        else 
+            theGraph[ei.first].expiration=message->timestamp-message->expiration;  
         LOG_DEBUG("Set edge expiration. Was: " << oldExp << " now: " << theGraph[ei.first].expiration);
     }
 
@@ -268,33 +338,47 @@ bool WatcherGraph::addEdge(const EdgeMessagePtr &message)
     theGraph[ei.first].displayInfo->loadConfiguration(message->layer); 
 
     // If labels are specified, set them up. 
-    if (message->node1Label && !message->node1Label->label.empty())
-    {
+    if (message->node1Label && !message->node1Label->label.empty()) {
         LabelDisplayInfoPtr lmp(new LabelDisplayInfo);
+        lmp->foregroundColor=theGraph[ei.first].displayInfo->labelColor;
+        lmp->backgroundColor=watcher::colors::black;
+        lmp->fontName=theGraph[ei.first].displayInfo->labelFont;
+        lmp->pointSize=theGraph[ei.first].displayInfo->labelPointSize;
         lmp->loadConfiguration(message->node1Label); 
+        lmp->expiration=message->timestamp+(timeForward?message->expiration:-message->expiration); 
         theGraph[*src].labels.push_back(lmp);
     }
-    if (message->middleLabel && !message->middleLabel->label.empty())
-    {
+    if (message->middleLabel && !message->middleLabel->label.empty()) {
         LabelDisplayInfoPtr lmp(new LabelDisplayInfo); 
+        lmp->foregroundColor=theGraph[ei.first].displayInfo->labelColor;
+        lmp->backgroundColor=watcher::colors::black;
+        lmp->fontName=theGraph[ei.first].displayInfo->labelFont;
+        lmp->pointSize=theGraph[ei.first].displayInfo->labelPointSize;
         lmp->loadConfiguration(message->middleLabel); 
+        lmp->expiration=message->timestamp+(timeForward?message->expiration:-message->expiration); 
         theGraph[ei.first].labels.push_back(lmp);
     }
-    if (message->node2Label && !message->node2Label->label.empty())
-    {
+    if (message->node2Label && !message->node2Label->label.empty()) {
         LabelDisplayInfoPtr lmp(new LabelDisplayInfo); 
+        lmp->foregroundColor=theGraph[ei.first].displayInfo->labelColor;
+        lmp->backgroundColor=watcher::colors::black;
+        lmp->fontName=theGraph[ei.first].displayInfo->labelFont;
+        lmp->pointSize=theGraph[ei.first].displayInfo->labelPointSize;
         lmp->loadConfiguration(message->node2Label); 
+        lmp->expiration=message->timestamp+(timeForward?message->expiration:-message->expiration); 
         theGraph[*dest].labels.push_back(lmp);
     }
 
-    if(message->bidirectional)
-    {
+    if(message->bidirectional) {
         ei=add_edge(*dest, *src, theGraph);
         if(!ei.second) 
             LOG_ERROR("Unable to add edge to graph between " << message->node2 << " and " << message->node1);
 
         if (message->expiration!=Infinity)
-            theGraph[ei.first].expiration=now+message->expiration;  
+            if (timeForward)
+                theGraph[ei.first].expiration=message->timestamp+message->expiration;  
+            else
+                theGraph[ei.first].expiration=message->timestamp-message->expiration;  
 
         theGraph[ei.first].displayInfo->loadConfiguration(message->layer); 
     }
@@ -303,15 +387,15 @@ bool WatcherGraph::addEdge(const EdgeMessagePtr &message)
     return retVal;
 }
 
-void WatcherGraph::doMaintanence()
+void WatcherGraph::doMaintanence(const watcher::Timestamp &ts)
 {
     TRACE_ENTER();
 
-    Timestamp now(getCurrentTime());
+    Timestamp now=ts==0?watcher::getCurrentTime():ts;
 
-    floatingLabels.erase(remove_if(floatingLabels.begin(), floatingLabels.end(), GraphFunctors::LabelExpired(now)), floatingLabels.end());
+    floatingLabels.erase(remove_if(floatingLabels.begin(), floatingLabels.end(), GraphFunctors::LabelExpired(now, timeForward)), floatingLabels.end());
 
-    remove_edge_if(GraphFunctors::EdgeExpired(theGraph, now), theGraph); 
+    remove_edge_if(GraphFunctors::EdgeExpired(theGraph, now, timeForward), theGraph); 
 
     graph_traits<Graph>::edge_iterator ei, eEnd;
     for(tie(ei, eEnd)=edges(theGraph); ei!=eEnd; ++ei)
@@ -331,7 +415,7 @@ void WatcherGraph::doMaintanence()
 
         WatcherGraphEdge::LabelList::iterator b=edge.labels.begin();
         WatcherGraphEdge::LabelList::iterator e=edge.labels.end();
-        WatcherGraphEdge::LabelList::iterator newEnd=remove_if(b, e, GraphFunctors::LabelExpired(now));
+        WatcherGraphEdge::LabelList::iterator newEnd=remove_if(b, e, GraphFunctors::LabelExpired(now, timeForward));
         edge.labels.erase(newEnd, e);
     }
 
@@ -365,7 +449,7 @@ void WatcherGraph::doMaintanence()
 
         WatcherGraphNode::LabelList::iterator b=node.labels.begin();
         WatcherGraphNode::LabelList::iterator e=node.labels.end();
-        WatcherGraphNode::LabelList::iterator newEnd=remove_if(b, e, GraphFunctors::LabelExpired(now));
+        WatcherGraphNode::LabelList::iterator newEnd=remove_if(b, e, GraphFunctors::LabelExpired(now, timeForward));
         node.labels.erase(newEnd, e);
     }
 
@@ -375,16 +459,18 @@ void WatcherGraph::doMaintanence()
 bool WatcherGraph::updateNodeLocation(const GPSMessagePtr &message)
 {
     TRACE_ENTER();
-    
+
     bool retVal;
-    boost::graph_traits<Graph>::vertex_iterator nodeIter;
+    vertexIterator nodeIter;
     if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer)) 
     {
         LOG_DEBUG("Updating GPS information for node " << theGraph[*nodeIter].nodeId);
         theGraph[*nodeIter].gpsData=message; 
+        if (locationTranslationFunction) 
+            locationTranslationFunction(theGraph[*nodeIter].gpsData); 
         retVal=true;
     }
-    
+
     TRACE_EXIT_RET(retVal);
     return retVal;
 }
@@ -394,14 +480,14 @@ bool WatcherGraph::updateNodeStatus(const NodeStatusMessagePtr &message)
     TRACE_ENTER();
 
     bool retVal;
-    boost::graph_traits<Graph>::vertex_iterator nodeIter;
+    vertexIterator nodeIter;
     if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer))
     {
         LOG_DEBUG("Updating connection status for node " << theGraph[*nodeIter].nodeId);
         theGraph[*nodeIter].connected=message->event==NodeStatusMessage::connect ? true : false;
         retVal=true;
     }
-    
+
     TRACE_EXIT_RET(retVal);
     return retVal;
 }
@@ -411,7 +497,7 @@ bool WatcherGraph::updateNodeProperties(const NodePropertiesMessagePtr &message)
     TRACE_ENTER();
 
     bool retVal;
-    boost::graph_traits<Graph>::vertex_iterator nodeIter;
+    vertexIterator nodeIter;
     if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer))
     {
         LOG_DEBUG("Updating properties for node " << theGraph[*nodeIter].nodeId);
@@ -436,7 +522,7 @@ bool WatcherGraph::updateNodeProperties(const NodePropertiesMessagePtr &message)
 
         retVal=true;
     }
-    
+
     TRACE_EXIT_RET(retVal);
     return retVal;
 }
@@ -445,7 +531,7 @@ bool WatcherGraph::updateNodeColor(const ColorMessagePtr &message)
 {
     TRACE_ENTER();
     bool retVal;
-    boost::graph_traits<Graph>::vertex_iterator nodeIter;
+    vertexIterator nodeIter;
     if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer))
     {
         LOG_DEBUG("Updating color information for node " << theGraph[*nodeIter].nodeId);
@@ -457,7 +543,7 @@ bool WatcherGraph::updateNodeColor(const ColorMessagePtr &message)
         }
         retVal=true;
     }
-    
+
     TRACE_EXIT_RET(retVal);
     return retVal;
 }
@@ -492,18 +578,20 @@ bool WatcherGraph::addRemoveLabel(const LabelMessagePtr &message)
         retVal=true;
     }
     else {
-        boost::graph_traits<Graph>::vertex_iterator nodeIter;
-        if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer))
-        {
+        vertexIterator nodeIter;
+        if(findOrCreateNode(message->fromNodeID, nodeIter, message->layer)) {
             LOG_DEBUG("Updating attached label information for node " << theGraph[*nodeIter].nodeId);
-            if (message->addLabel)
-            {
+            if (message->addLabel) {
                 LabelDisplayInfoPtr lmp(new LabelDisplayInfo); 
                 lmp->loadConfiguration(message); 
+                if (timeForward) 
+                    lmp->expiration=message->timestamp+message->expiration;  
+                else 
+                    lmp->expiration=message->timestamp-message->expiration;  
+
                 theGraph[*nodeIter].labels.push_back(lmp);
             }
-            else
-            {
+            else {
                 WatcherGraphNode::LabelList::iterator b=theGraph[*nodeIter].labels.begin();
                 WatcherGraphNode::LabelList::iterator e=theGraph[*nodeIter].labels.end();
                 WatcherGraphNode::LabelList::iterator newEnd=remove_if(b, e, GraphFunctors::MatchMessageLabelPtr(message));
@@ -546,7 +634,7 @@ bool WatcherGraph::updateGraph(const MessageStreamFilter &theFilter)
     bool retVal=false;
     // handle vertices
     {  
-        graph_traits<Graph>::vertex_iterator i, end, next;
+        vertexIterator i, end, next;
         tie(i, end) = vertices(theGraph);
         for(next=i; i!=end; i=next)
         {
@@ -597,7 +685,7 @@ bool WatcherGraph::updateGraph(const MessageStreamFilter &theFilter)
         }
     }
 
-    
+
     TRACE_EXIT_RET(retVal);
     return retVal;
 }
@@ -639,12 +727,11 @@ bool WatcherGraph::updateGraph(const MessagePtr &message)
     return retVal;
 }
 
-bool WatcherGraph::findNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retIter)
+bool WatcherGraph::findNode(const NodeIdentifier &id, vertexIterator &retIter)
 {
     TRACE_ENTER();
 
-    graph_traits<Graph>::vertex_iterator beg;
-    graph_traits<Graph>::vertex_iterator end;
+    vertexIterator beg, end;
     tie(beg, end) = vertices(theGraph);
 
     // GTL - may be a way to use boost::bind() here instead
@@ -657,7 +744,7 @@ bool WatcherGraph::findNode(const NodeIdentifier &id, boost::graph_traits<Graph>
     return retVal;
 }
 
-bool WatcherGraph::findOrCreateNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retIter, const GUILayer & /* layer */)
+bool WatcherGraph::findOrCreateNode(const NodeIdentifier &id, vertexIterator &retIter, const GUILayer & /* layer */)
 {
     TRACE_ENTER();
     bool retVal=true;
@@ -666,7 +753,7 @@ bool WatcherGraph::findOrCreateNode(const NodeIdentifier &id, boost::graph_trait
         // Make sure there is always a PHYSICAL node for every layer
         // if (layer!=PHYSICAL_LAYER)
         // {
-        //     boost::graph_traits<Graph>::vertex_iterator unused;
+        //     vertexIterator unused;
         //     findOrCreateNode(id, unused, PHYSICAL_LAYER); 
         // }
 
@@ -683,7 +770,7 @@ bool WatcherGraph::findOrCreateNode(const NodeIdentifier &id, boost::graph_trait
     return retVal;
 }
 
-bool WatcherGraph::createNode(const NodeIdentifier &id, boost::graph_traits<Graph>::vertex_iterator &retIter)
+bool WatcherGraph::createNode(const NodeIdentifier &id, vertexIterator &retIter)
 {
     TRACE_ENTER();
     graph_traits<Graph>::vertex_descriptor v = add_vertex(theGraph);
@@ -708,7 +795,7 @@ bool WatcherGraph::saveConfig() const
         BOOST_FOREACH(const LabelDisplayInfoPtr &ldip, theGraph[*ei].labels)
             ldip->saveConfiguration();
     }
-        
+
     graph_traits<Graph>::vertex_iterator vi, vEnd;
     for(tie(vi, vEnd)=vertices(theGraph); vi!=vEnd; ++vi) {
         if (theGraph[*vi].displayInfo->layer==PHYSICAL_LAYER) {
@@ -728,40 +815,5 @@ std::ostream &watcher::operator<<(std::ostream &out, const watcher::WatcherGraph
     return out;
 }
 
-// bool WatcherGraph::pack(ostream &os)
-// {
-//     TRACE_ENTER();
-//     boost::archive::text_oarchive oa(os);
-//     oa << (*this);
-//     TRACE_EXIT();
-//     return true; 
-// }
-// 
-// WatcherGraphPtr WatcherGraph::unpack(std::istream& is)
-// {
-//     boost::archive::text_iarchive ia(is);
-//     WatcherGraph* ret = 0;
-//     try
-//     {
-//         ia >> ret;
-//     }
-//     catch (boost::archive::archive_exception& e)
-//     {
-//         LOG_WARN("Exception thrown while serializing the graph: " << e.what());
-//         return WatcherGraphPtr();
-//     }
-//     return WatcherGraphPtr(ret); 
-// }
-// 
-// template<typename Archive>
-// void WatcherGraph::serialize(Archive &ar, const unsigned int /* file_version */)
-// {
-//     TRACE_ENTER();
-//     ar & theGraph;
-//     TRACE_EXIT();
-// }
-//
-//
-//BOOST_CLASS_EXPORT(watcher::WatcherGraph);
 
 

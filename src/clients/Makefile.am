@@ -1,3 +1,4 @@
+include $(top_srcdir)/Makefile.top
 
 if ENABLE_HIERARCHY_CLIENT
 WHC_DIR = watcherHierarchyClient
@@ -15,6 +16,18 @@ if ENABLE_OGREWATCHER
 ORGE_DIR = ogreWatcher 
 endif
 
-SUBDIRS=routeFeeder commandlineFeeders $(WHC_DIR) $(FULL_DIRS) $(W3D_DIR) $(ORGE_DIR)
+if ENABLE_EARTHWATCHER
+EARTH_DIR=earthWatcher
+endif
+
+SUBDIRS=\
+	routeFeeder \
+	commandlineFeeders \
+	randomScenario \
+	$(WHC_DIR) \
+	$(FULL_DIRS) \
+	$(W3D_DIR) \
+	$(ORGE_DIR) \
+	$(EARTH_DIR)
 
 

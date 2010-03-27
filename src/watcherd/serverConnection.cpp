@@ -27,6 +27,7 @@
 #include <libwatcher/speedWatcherMessage.h>
 #include <libwatcher/nodeStatusMessage.h>
 #include <libwatcher/playbackTimeRange.h>
+#include <libwatcher/messageStreamFilterMessage.h>
 
 #include "watcherd.h"
 #include "writeDBMessageHandler.h"
@@ -34,6 +35,7 @@
 #include "replayState.h"
 #include "database.h"
 #include "logger.h"
+#include "singletonConfig.h"
 
 using namespace std; 
 using namespace boost::asio;
@@ -61,9 +63,27 @@ namespace watcher {
         strand_(io_service),
         write_strand_(io_service),
         conn_type(unknown),
-        isPlaying_(false), isLive_(true)
+        isPlaying_(false), isLive_(true),
+        dataNetwork(0),
+        messageStreamFilterEnabled(false)
     {
-        TRACE_ENTER(); 
+        TRACE_ENTER();
+        libconfig::Config &cfg=SingletonConfig::instance();
+        libconfig::Setting &root=cfg.getRoot();
+        try {
+            string value;
+            if (root.lookupValue("dataNetwork", value)) {
+                boost::system::error_code ec;
+                dataNetwork=ip::address_v4::from_string(value, ec);
+                if (ec) {
+                    LOG_ERROR("Error parsing dataNetwork value from configuration file: " << ec);
+                    exit (1); // GTL too harsh?
+                }
+            }
+        }
+        catch (const libconfig::SettingException &e) {
+            LOG_ERROR("Error reading \"dataNetwork\" from configuration at " << e.getPath() << ": " << e.what());
+        }
         TRACE_EXIT();
     }
 
@@ -266,6 +286,26 @@ namespace watcher {
             LOG_WARN("unable to cast to PlaybackTimeRangeMessage");
     }
 
+    void ServerConnection::filter(event::MessagePtr& m)
+    {
+        MessageStreamFilterMessagePtr p (boost::dynamic_pointer_cast<MessageStreamFilterMessage>(m));
+        if (p) { 
+            messageStreamFilterEnabled=p->enableAllFiltering;
+            if (p->applyFilter) { 
+                LOG_DEBUG("Adding message filter: " << p->theFilter);
+                messageStreamFilters.push_back(p->theFilter);
+            }
+            else {
+                LOG_DEBUG("Removing message filter: " << p->theFilter);
+                messageStreamFilters.remove(p->theFilter);
+            }
+            LOG_DEBUG("There are now " << messageStreamFilters.size() << " filters on this stream:"); 
+            BOOST_FOREACH(const MessageStreamFilter &f, messageStreamFilters) 
+                LOG_DEBUG("     " << f); 
+        } else
+            LOG_WARN("unable to cast to MessageStreamFilterMessagePtr");
+    }
+
     bool ServerConnection::dispatch_gui_event(MessagePtr& m)
     {
         static const struct {
@@ -277,6 +317,7 @@ namespace watcher {
             { SEEK_MESSAGE_TYPE, &ServerConnection::seek },
             { SPEED_MESSAGE_TYPE, &ServerConnection::speed },
             { PLAYBACK_TIME_RANGE_MESSAGE_TYPE, &ServerConnection::range },
+            { MESSAGE_STREAM_FILTER_MESSAGE_TYPE, &ServerConnection::filter },
             { UNKNOWN_MESSAGE_TYPE, 0 }
         };
 
@@ -306,21 +347,29 @@ namespace watcher {
             vector<MessagePtr> arrivedMessages; 
             if (DataMarshaller::unmarshalPayload(arrivedMessages, numOfMessages, incomingBuffer.begin(), bytes_transferred))
             {
+                boost::system::error_code err;
+                boost::asio::ip::tcp::endpoint ep = getSocket().remote_endpoint(err);
+                if (err) { 
+                    LOG_INFO("Lost connection to client, cleaning up connection"); 
+                    read_error(err); // not really a read error, but this cleans up the connection.
+                    TRACE_EXIT();
+                    return;
+                }
+
                 LOG_INFO("Recvd " << arrivedMessages.size() << " message" <<
-                         (arrivedMessages.size()>1?"s":"") << " from " <<
-                         remoteEndpoint().address()); 
+                        (arrivedMessages.size()>1?"s":"") << " from " <<
+                        ep.address()); 
 
                 // Add the incoming address to the Message so everyone
-                // knows who the message came from.
-                // GTL - this breaks when the watcher is run on a control network
-                // and the nodes are on a data network. The endpoint of the
-                // socket is the control network address of the test node not the 
-                // data network address - so we end up with 2 different node IDs for 
-                // each node.
-                boost::asio::ip::tcp::endpoint ep = getSocket().remote_endpoint();
+                // knows who the message came from. If there is a dataNetwork, use that 
+                // to mask/modify the incoming ip address to be in the correct network.
                 BOOST_FOREACH(MessagePtr m, arrivedMessages) {
-                    if(m->fromNodeID==NodeIdentifier())  // is empty
-                        m->fromNodeID=ep.address();
+                    if (isFeederEvent(m->type)) {
+                        if (m->fromNodeID==NodeIdentifier() && dataNetwork.to_ulong()!=0) { 
+                            unsigned long mask=ip::address_v4::netmask(dataNetwork).to_ulong();
+                            m->fromNodeID=ip::address_v4((ep.address().to_v4().to_ulong() & ~mask) | (mask & dataNetwork.to_ulong()));
+                        }
+                    }
                 }
 
                 /*
@@ -337,7 +386,7 @@ namespace watcher {
                     BOOST_FOREACH(MessagePtr& i, arrivedMessages) {
                         if (dispatch_gui_event(i)) {
                             //empty
-                       } else if (isFeederEvent(i->type)) {
+                        } else if (isFeederEvent(i->type)) {
                             conn_type = feeder;
 
                             if (! watcher.readOnly()) {
@@ -348,7 +397,7 @@ namespace watcher {
                                  */
                                 addMessageHandler(MessageHandlerPtr(new WriteDBMessageHandler()));
                             }
-                       }
+                        }
                     }
                 }
 
@@ -448,6 +497,19 @@ namespace watcher {
     void ServerConnection::sendMessage(MessagePtr msg)
     {
         TRACE_ENTER();
+
+        if (!messageStreamFilterEnabled) {
+            BOOST_FOREACH(const MessageStreamFilter &f, messageStreamFilters) {
+                if (!f.passFilter(msg)) {
+                    LOG_DEBUG("Not sending message as it did not pass the current set of message filters"); 
+                    TRACE_EXIT();
+                    return;
+                }
+                else
+                    LOG_DEBUG("Message passes all filters - sending it."); 
+            }
+        }
+
         DataMarshaller::NetworkMarshalBuffers outBuffers;
         DataMarshaller::marshalPayload(msg, outBuffers);
 
@@ -468,8 +530,36 @@ namespace watcher {
     void ServerConnection::sendMessage(const std::vector<MessagePtr>& msgs)
     {
         TRACE_ENTER();
+
+        std::vector<MessagePtr> messageList;
+
+        if (!messageStreamFilterEnabled)
+            messageList=msgs;
+        else {
+            BOOST_FOREACH(const MessagePtr m, msgs) { 
+                bool passed=false;
+                // Need to figure out if filters are ANDed or ORed or something else
+                // for now if it passes any - it's in.
+                BOOST_FOREACH(const MessageStreamFilter &f, messageStreamFilters) 
+                    if (f.passFilter(m))  
+                        passed=true;
+                if (passed) {  
+                    LOG_DEBUG("Message passes all filters - sending it."); 
+                    messageList.push_back(m); 
+                }
+                else 
+                    LOG_DEBUG("Not sending message as it did not pass the current set of message filters"); 
+            }
+
+            if (!messageList.size()) { 
+                LOG_DEBUG("No messages passed the filters, sending nothing."); 
+                TRACE_EXIT();
+                return; 
+            }
+        }
+
         DataMarshaller::NetworkMarshalBuffers outBuffers;
-        DataMarshaller::marshalPayload(msgs, outBuffers);
+        DataMarshaller::marshalPayload(messageList, outBuffers);
 
         /// FIXME melkins 2004-04-19
         // is it safe to call async_write and async_read from different

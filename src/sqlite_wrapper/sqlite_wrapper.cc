@@ -22,6 +22,7 @@
  */
 
 #include <cassert>
+#include <sstream>
 #include "sqlite_wrapper.h"
 #include "sqlite_thread.h"
 
@@ -29,12 +30,12 @@ using namespace sqlite_wrapper;
 using namespace std;
 using namespace boost;
 
-void sqlite_wrapper::config(int mode)
-{
-    int res = sqlite3_config(mode);
-    if (res != SQLITE_OK)
-        throw Exception("sqlite3_config error");
-}
+// void sqlite_wrapper::config(int mode)
+//{
+//    int res = sqlite3_config(mode);
+//    if (res != SQLITE_OK)
+//        throw Exception("sqlite3_config error");
+//}
 
 Connection::Connection(const std::string& path, flags f) : db_(0)
 {
@@ -108,6 +109,8 @@ void Connection::execute(const std::string& s)
     char *err = 0;
     int res = sqlite3_exec(db_, s.c_str(), 0, 0, &err);
 
+    busy_done(); //wake up waiting threads
+
     if (err) {
         std::string errstr(err);
         sqlite3_free(err);
@@ -152,6 +155,8 @@ void Row::step()
 
     int res = sqlite3_step(p.get());
 
+    busy_done(); // wake up any waiting threads
+
     switch(res) {
         case SQLITE_ROW:
             ++impl_->nrows;
@@ -161,8 +166,6 @@ void Row::step()
         case SQLITE_DONE:
             flags_ |= row_eof;
 
-            // wake up any waiting threads
-            busy_done();
             break;
 
         case SQLITE_ERROR:
@@ -171,10 +174,19 @@ void Row::step()
                 throw Exception( sqlite3_errmsg(impl_->conn.db_) );
             } break;
 
+        case SQLITE_CORRUPT:
+            { 
+                flags_ |= row_fail;
+                throw Exception("database is corrupt"); 
+            } 
+            break;
+
         default:
             {
                 flags_ |= row_fail;
-                throw Exception("unhandled return code from sqlite3_step():");
+                std::ostringstream err_mess;
+                err_mess << "Unhandled ret code from sqlite3_step: " << res;
+                throw Exception(err_mess.str());
             } break;
     }
 }

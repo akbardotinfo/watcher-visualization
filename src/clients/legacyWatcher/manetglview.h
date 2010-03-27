@@ -27,6 +27,8 @@
 #include <QGLWidget>
 #include <QMenu>
 #include <QSlider>
+#include <QTimer>
+#include <boost/thread/locks.hpp>
 #include "declareLogger.h"
 #include "libwatcher/watcherGraph.h"
 #include "libwatcher/messageStream.h"
@@ -72,7 +74,11 @@ public slots:
         void toggleMonochrome(bool isOn);
         void toggleThreeDView(bool isOn);
         void toggleBackgroundImage(bool isOn);
+        void toggleLoopPlayback(bool inOn);
         void showKeyboardShortcuts(); 
+
+        void setGPSScale();  // spawn dialog to get new scale value
+        void setEdgeWidth(); // spawn dialog to get default edge width
 
         void showPlaybackTime(bool isOn);
         void showPlaybackRange(bool isOn);
@@ -95,7 +101,11 @@ public slots:
         void sliderMovedInGUI(int newVal);
         void sliderPressedInGUI();
 
+        void spawnAboutBox(); 
         void saveConfiguration();
+        void streamFilteringEnabled(bool isEnabled); 
+
+        void shutdown(); 
 
 signals:
         void positionReset();
@@ -108,6 +118,7 @@ signals:
         void monochromeToggled(bool isOn);
         void threeDViewToggled(bool isOn); 
         void backgroundImageToggled(bool isOn); 
+        void loopPlaybackToggled(bool inOn);
 
         void checkPlaybackTime(bool isOn);
         void checkPlaybackRange(bool isOn);
@@ -123,6 +134,8 @@ signals:
         // Emitted when view->backgroun image should be enabled/disabled.
         void enableBackgroundImage(bool);
 
+        void enableStreamFiltering(bool); 
+
     protected:
         DECLARE_LOGGER();
 
@@ -131,9 +144,6 @@ signals:
 
         void initializeGL();
         void paintGL();
-        // virtual void paintEvent(QPaintEvent *event);
-        // void paintOverlayGL();
-        // void PaintEvent(QPaintEvent *event);
 
         void resizeGL(int width, int height);
         
@@ -144,8 +154,9 @@ signals:
 
         void keyPressEvent(QKeyEvent * event);
 
-
         unsigned int getNodeIdAtCoords(const int x, const int y);
+        void drawStatusString(); 
+        void drawDebugInfo();
 
     private:
 
@@ -162,9 +173,16 @@ signals:
         watcher::WatcherGraph wGraph;
         std::string serverName; 
 
+        void connectStream(); // connect to watherd and init the message stream. blocking...
+        boost::thread *watcherdConnectionThread;
+        boost::thread *maintainGraphThread;
+        boost::thread *checkIOThread;
+        boost::mutex graphMutex;
+
         float streamRate; 
         bool playbackPaused;
         bool autorewind;
+        bool messageStreamFiltering;
         bool sliderPressed;
 
         watcher::event::GPSMessage gpsDataFormat;
@@ -212,6 +230,7 @@ signals:
         bool showPlaybackTimeInStatusString;
         bool showPlaybackRangeString;
         bool showVerboseStatusString;
+        bool showDebugInfo;
 
         float scaleText;
         float scaleLine;
@@ -232,10 +251,11 @@ signals:
         watcher::Timestamp playbackStartTime;
 
         void drawNodeLabel(const watcher::WatcherGraphNode &node, bool physical);
-        void gps2openGLPixels(const watcher::GPSMessage::DataFormat &format, const double inx, const double iny, const double inz, GLdouble &x, GLdouble &y, GLdouble &z);
+        static bool gps2openGLPixels(watcher::event::GPSMessagePtr &mess);
         bool isActive(const watcher::GUILayer &layer); 
 
         // drawing stuff
+        void drawNotConnectedState(); 
         bool autoCenterNodesFlag; 
         void drawManet(void);
         struct QuadranglePoint
@@ -308,12 +328,17 @@ signals:
         void drawPyramid(GLdouble radius); 
         void drawCube(GLdouble radius); 
         void drawTeapot(GLdouble radius); 
-        void drawDisk(GLdouble radius); 
         void drawTorus(GLdouble innerRadius, GLdouble outerRadius); 
         void drawSphere(GLdouble radius); 
         void drawCircle(GLdouble radius); 
         void drawFrownyCircle(GLdouble); 
 
+        // updating the graph is a separate function as it's done in it's own thread
+        void maintainGraph();
+
+        unsigned int nodesDrawn, edgesDrawn, labelsDrawn;
+        unsigned int framesDrawn, fpsTimeBase;
+        double framesPerSec;
 };
 
 #endif
