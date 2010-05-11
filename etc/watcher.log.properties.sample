@@ -1,0 +1,37 @@
+# log4j.rootLogger=info, flog, stdout
+# log4j.rootLogger=warn, flog, stdout
+log4j.rootLogger=debug, flog, stdout
+# log4j.rootLogger=trace, flog, stdout
+
+# Set levels per module
+# log4j.logger.global=trace
+# log4j.logger.manetGLView=trace
+# log4j.logger.TimeScaleDraw=trace
+# log4j.logger.GraphCurve=trace
+# log4j.logger.GraphPlot=trace
+# log4j.logger.singletonConfig=trace
+# log4j.logger.Skybox=trace
+# log4j.logger.BackgroundImage=trace
+# log4j.logger.QWatcherGraphDialog=trace
+# log4j.logger.WatcherMainWindow=trace
+# log4j.logger.WatcherScrollingGraphControl=trace
+# log4j.logger.WatcherPropertyData=trace
+# log4j.logger.WatcherGraph=trace
+# log4j.logger.WatcherAboutDialog=fatal
+
+# libwatcher
+# log4j.logger.DataMarshaller=info
+
+# stdout is set to be a ConsoleAppender.
+log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+log4j.appender.stdout.layout.ConversionPattern=%-4r [%t] %-5p %c (%F:%L) - %m%n
+
+# flog is set to log to a file, not appended
+log4j.appender.flog=org.apache.log4j.FileAppender
+log4j.appender.flog.layout=org.apache.log4j.PatternLayout
+log4j.appender.flog.file=watcher.log
+log4j.appender.flog.append=false
+log4j.appender.flog.layout.ConversionPattern=%-4r [%t] %-5p %c (%F:%L) - %m%n
+
+
