@@ -86,6 +86,7 @@ SharedStream::~SharedStream()
 void SharedStream::seek(const SeekMessagePtr& p)
 {
     TRACE_ENTER();
+    LOG_DEBUG("in: isPlaying_=" << isPlaying_ << ", isLive_=" << isLive_);
     if (p->offset == SeekMessage::eof) {
 	if (isLive_) {
 	    // nothing to do
@@ -106,6 +107,7 @@ void SharedStream::seek(const SeekMessagePtr& p)
 	    impl_->replay_->run();
 	isLive_ = false;
     }
+    LOG_DEBUG("out: isPlaying_=" << isPlaying_ << ", isLive_=" << isLive_);
     TRACE_EXIT();
 }
 
@@ -242,7 +244,7 @@ void SharedStream::subscribe(ServerConnectionPtr p)
 
     // send the current state to the new subscribe
     {
-	SpeedMessagePtr msg(new SpeedMessage(impl_->replay_->speed()));
+	SpeedMessagePtr msg(new SpeedMessage(isLive_ ? 1.0 : impl_->replay_->speed()));
 	p->sendMessage(msg);
     }
     {
