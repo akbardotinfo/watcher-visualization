@@ -1,4 +1,4 @@
-/* Copyright 2009 SPARTA, Inc., dba Cobham Analytic Solutions
+/* Copyright 2009, 2010 SPARTA, Inc., dba Cobham Analytic Solutions
  * 
  * This file is part of WATCHER.
  * 
@@ -17,7 +17,6 @@
  */
 
 /**@file
- * @author Michael.Elkins@cobham.com
  * @date 2009-05-04
  */
 
@@ -131,3 +130,5 @@ TimeRange SqliteDatabase::eventRange()
 
     return TimeRange(begin, end);
 }
+
+// vim:sw=4 ts=8
