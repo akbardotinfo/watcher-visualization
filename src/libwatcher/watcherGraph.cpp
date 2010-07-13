@@ -30,6 +30,7 @@
 #include "nodeStatusMessage.h"
 #include "edgeMessage.h"
 #include "colorMessage.h"
+#include "singletonConfig.h"
 
 using namespace std;
 using namespace boost;
@@ -332,6 +333,12 @@ bool WatcherGraph::updateNodeStatus(const NodeStatusMessagePtr &message)
 bool WatcherGraph::updateNodeProperties(const NodePropertiesMessagePtr &message)
 {
     LOG_DEBUG("Updating properties for node " << message->fromNodeID); 
+    
+    // create the layer if needed. This is odd though as the layer is empty and only 
+    // ever modifies node settings. But it still needs to exist, so a GUI can toggle it 
+    // on and off, etc. 
+    name2LayerIndex(message->layer); 
+    
     size_t index=nid2Index(message->fromNodeID); 
     if (message->useColor)
         nodes[index].color=message->color; 
@@ -424,6 +431,23 @@ bool WatcherGraph::saveConfiguration(void)
         nodes[n].saveConfiguration(); 
     for (size_t l=0; l!=numValidLayers; l++)  
         layers[l].saveConfiguration(); 
+
+    // Graph remembers which layers there are and which are active.
+    if (numValidLayers) { 
+        SingletonConfig::lock(); 
+        libconfig::Config &cfg=SingletonConfig::instance();
+        string prop("layers"); 
+        if (!cfg.getRoot().exists(prop))
+            cfg.getRoot().add(prop, libconfig::Setting::TypeGroup);
+        libconfig::Setting &layerCfg=cfg.lookup(prop); 
+        for (size_t l=0; l!=numValidLayers; l++)  {
+            if (!layerCfg.exists(layers[l].layerName))
+                layerCfg.add(layers[l].layerName, libconfig::Setting::TypeBoolean);
+            layerCfg[layers[l].layerName]=layers[l].isActive;
+        }
+        SingletonConfig::unlock();
+    }
+
     return true;
 }
 std::ostream &watcher::operator<<(std::ostream &out, const watcher::WatcherGraph &watcherGraph)
