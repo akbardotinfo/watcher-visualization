@@ -1,0 +1,130 @@
+\subsection{Earth Watcher}
+\label{EarthWatcher}
+
+The Earth Watcher is a daemon application for Linux systems that allows
+visualization of Watcher events in the Google Earth GUI.
+
+{\it earthWatcher} source code can be found in {\tt .\slash src\slash
+clients\slash earthWatcher}. The binary produced after building is 
+named {\tt earthWatcher}. 
+
+\subsubsection{Command Line Options}
+\begin{itemize}
+\item {\tt -h} or {\tt --help}, show a usage message and exit. 
+\item {\tt -c} of {--configFile}, gives the location of the configuration file. If not given a default one will be created, used, and saved on program exit.
+
+\item {\tt -a} or {\tt --latoff}, translate GPS coordinates relative to a given latitude
+\item {\tt -A} or {\tt --altoff}, translate GPS coordinates relative to the given altitude
+\item {\tt -c} or {\tt --config}, specify a configuration file (default:
+earthWatcher.cfg)
+\item {\tt -d} or {\tt --speed}, specify the event playback rate
+\item {\tt -h} or {\tt --help}, display this help message
+\item {\tt -i} or {\tt --icon-scale}, adjust the size of node icons
+\item {\tt -I} or {\tt --icon-path}, specify the node icon to use
+\item {\tt -o} or {\tt --output}, specifies the output KML file
+\item {\tt -O} or {\tt --lonoff}, translate GPS coordinates relative to a given longitude
+\item {\tt -r} or {\tt --refresh}, write the the output every SECS seconds
+\item {\tt -s} or {\tt --server}, connect to the watcher server on the given host
+\item {\tt -S} or {\tt --seek}, start event playback at the specified timestamp.  May be specified relative to the first and last timestamps in the Watcher database by prefixing the offset with "+" or "-". Example: +5000 means 5 seconds after the first event in the database.
+\item{\tt  -t} or {\tt --steps}, number of points to use when drawing a spline (default: 2)
+
+\end{itemize}
+
+\subsubsection{Configuration}
+\begin{itemize}
+\item {\tt server}, name or ipaddress of the server to connect to.
+\item {\tt service}, name of service (usaully "watcherd") or port number on which the server is listening.
+\item {\tt layers}, a listing of layers from the Layers menu. All layers the watcher knows about will show up here in a {\tt layername = bool} pair. 
+If the bool is {\tt true}, the layer will be active (and shown), if {\tt false} the layer will not be shown. Every {\tt layername} will become
+a folder in the {\tt Places} menu in the Google Earth GUI.
+\item {\tt layerPadding = float}, how much padding (in feet) to place between layers. 
+\item {\tt latOff = float}, translate GPS coordinates relative to a given latitude.
+\item {\tt lonOff = float}, translate GPS coordinates relative to a given longitude.
+\item {\tt outputFile = string}, specifies the output KML file.
+\item {\tt iconPath = string}, specify an alternate icon to use for nodes.
+\item {\tt splineSteps}, the number of points in a spline when drawing edges.
+\end{itemize}
+
+\subsubsection{Reloading Configuration File}
+
+EarthWatcher checks for changes in the configuration file while running.  The purpose of this feature is to allow for
+defined layers to be toggled on or off during runtime.  No options other than the layers are checked for changes during runtime.
+
+\subsubsection{Translating GPS coordinates}
+
+If the GPS coordinates stored in the Watcher database during a test run are not
+accurate, the EarthWatcher has options to translate the coordinates relative to
+some location on the Earth.  For example, the origin is located in the Atlantic
+Ocean off the coast of West Africa.  Using the {\tt latOff} and {\tt lonOff}
+options can place the nodes in a more geographically interesting location.
+
+\subsubsection{Using EarthWatcher with Google Earth GUI}
+
+EarthWatcher writes a KML file, by defauled named {\tt watcher.kml}.  Follow
+these steps to view the generated KML file in Google Earth:
+
+\begin{itemize}
+\item Launch the Google Earth GUI.
+\item Select the {\it Add} menu.
+\item Select the {\it Network Link} menu item.
+\item Click the {\it Browse} button next to the text input box labaled {\it
+Link}.
+\item Browse to the folder containing the KML file created by EarthWatcher.
+\item Click on the {\it Refresh tab}.
+\item In the {\it Time-Based Refresh area}, click the drop down box next to {\it
+When} and select {\it Periodically}.
+\item Set the time to 0 hours, 0 minutes and 1 second.
+\item Click OK.
+\end{itemize}
+
+In the {\it Places} pane in Google Earth, there will be a {\it Untitled Network Link}
+under {\it Temporary Places} in the tree view that contains all the Watcher related
+elements.  Double-clicking on {\it Untitled Network Link} will cause Google
+Earth to center and zoom in on the Watcher objects.
+
+\subsubsection{Using Google Earth when disconnected from the Internet}
+
+Google Earth is normally used on an Internet-connected workstation.  When
+browsing an area of interest, the satellite images are broken into tiles and
+sent to the Google Earth client on demand.  In order to avoid sending the same
+tiles repeatedly, the Google Earth client caches the tiles locally on the hard
+drive.  Once the tiles are cached, it is possible to use the Google Earth client
+to browse areas that are contained in the cache while disconnected from the
+Internet.
+
+On a Linux-based operating system, the image cache is located in the
+{\tt \$HOME\slash .googleearth\slash Cache } directory.  The image cache consists of
+two files named {\tt dbCache.dat} and {\tt dbCache.dat.index}.  In addition to
+the satellite image cache, there are also subdirectories containing cached
+placemark icons and 3-D models.  It is possible to package up the {\tt Cache}
+directory and move it to another machine for use.
+
+Google Earth allows a maximum size of 2 gigabytes for the satellite image cache.
+When attempting to cache multiple different areas of interest, this limitation
+may require creation of separate cache files for each area rather than a single
+cache file.  The cache files can be swapped and Google Earth restarted in order
+to switch the area of interest for browsing.  The easiest way to handle this is
+to have separate {\tt Cache} directories for each location of interest.  For
+example, {\tt Cache.NewYork} or {\tt Cache.GrandCanyon}.  The appropriate
+directory can be renamed {\tt Cache} or a symbolic-link can be used to select
+which image cache to use.
+
+In the sitation where the disconnected workstation used for browsing Google
+Earth can not initially be connected to the Internet, it is necessary to perform
+one additional initial step, otherwise Google Earth will fail to work.  The
+first time Google Earth is run some registration information is exhanged with
+Google's servers.  When running in disconnected mode, this information must
+exist, or it can't be used for offline browsing.  On a Linux-based machine, the
+generated configuration files reside in the {\tt \$HOME\slash .config\slash Google}
+directory.  These files can be copied from any Internet connected machine and
+will allow offline browsing on another machine.
+
+In the simplest case where a single image cache is generated on an
+Internet-connected machine and moved to another offline machine for browsing,
+the following command is sufficient for creating a package that can be moved to
+the offline machine:
+
+{\tt \# tar jcvf ge-cache.tar.bz2 .config\slash Google .googleearth}
+
+This file can be unpacked in the home directory of the Google Earth user on the
+offline machine.
