@@ -1,0 +1,82 @@
+\newpage
+\label{watcherd}
+\section{The Watcher Daemon}
+
+The watcher daemon is responsible for collecting events from the test nodes and
+sending event streams to the Watcher GUIs.  Events from the test nodes are
+stored in an SQLite databased (named "event.db" by default).  The Watcher Daemon
+determines whether a connection is a test node or GUI by the type of the first
+event received.
+
+When recording events from the test nodes into the database, events are
+appended to the existing database, or a new database is created if it does not
+exist.  The Watcher Daemon may also be invoked in read-only database mode using
+the command line option {\tt -r} or {\tt --read-only}, in which case events are not stored
+in the database.  Read-only mode is useful particularly when replaying events
+from a database from some time in the past.  In this case, it may not make
+sense to append any current event stream from the test nodes when a large time
+gap exists between past and present runs.
+
+The watcher daemon source code can be found in {\tt .\slash src\slash watcherd}. The binary produced after building is 
+named {\tt watcherd}. 
+
+\subsection{Live Mode}
+
+When a GUI connects to the Watcher Daemon, it will by default subscribe to the
+live event stream coming from the test nodes.  In this case, the Watcher Daemon
+is simply retransmitting received events to all listening GUIs rather than
+fetching events from the database.  The events are also stored in the database
+for later replay.
+
+If a GUI pauses, rewinds, or slows playback, it will switch to Playback mode.
+
+\subsection{Playback Mode}
+
+In Playback Mode, the Watcher Daemon fetches events from the database and sends
+them to the GUI.  Each GUI connection has an independent notion of the current
+playback time offset, direction and speed.  Stopping playback in one GUI will
+not cause playback to stop in another GUI.
+
+The Watcher Daemon will automatically pause Playback when the last event from
+the database has been sent to the GUI.  Thus, if a GUI were playing at a time
+offset near the end of the database, and faster than real time, the GUI will be
+paused when the last event is sent, even if additional events arrive from test
+nodes.
+
+\subsection{Configuration}
+
+The Watcher Daemon has several optional configuration options.  By default,
+watcherd will read its configuration from a file named {\tt watcherd.cfg}.  An
+alternate configuration file can be specified using the {\tt -c} command line
+option.
+
+\begin{itemize}
+\item {\tt server}, the DNS name or IP address of the network interface to listen for
+connections
+\item {\tt port}, the TCP port number to listen on for connections (default: 8095)
+\item {\tt serverThreadNum}, the number of threads to spawn for handling connections
+\item {\tt databasePath}, the full pathname to the test node event database (default:
+{\tt event.db})
+\item {\tt dataNetwork}, if it exists, this network address will be mapped onto any
+incoming feeder messages that do not specify a source address. For example, if the 
+{\tt dataNetwork} is set to 192.168.10.0 and the incoming feeder message is from ip address
+192.168.1.121, the incoming feeder message is set to 192.168.10.121. This is needed as the watcher
+daemon will use the ip address of incoming feeder messages to set the {\tt from address} on the messages.
+If the watcherd is running on a network that is different than the test nodes (which is 
+frequently the case when using a control network), this will map the control network addresses
+to the data network address space, so all feeder messages appear to come from the same
+network. If the dataNetwork was not specified, then this would generate 2 different
+addresses for a single node, confusing any attached GUI.
+\end{itemize}
+
+\subsection{Command Line Options}
+
+\begin{itemize}
+\item {\tt -c} or {\tt --config}, specify an alternate configuration file (default: {\tt
+watcherd.cfg})
+\item {\tt -r} or {\tt --read-only}, mark the event database Read Only so that no
+new events from test nodes will be written
+\item {\tt -h} or {\tt --help}, display a list of all supported command line
+options
+\end{itemize}
+
