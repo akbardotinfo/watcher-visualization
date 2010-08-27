@@ -4,7 +4,7 @@
 
 Summary:	ARL1X/CTA Watcher
 Name:		%{_project}-%{_name}
-Version:	20100803
+Version:	20100818
 Release:	1
 License:	Other
 Group:		Applications/CTA
@@ -26,7 +26,9 @@ BuildRequires:	cta-logger-devel
 BuildRequires:	libkml-devel
 BuildRequires:	uriparser-devel
 
+# Legacy Watcher
 BuildRequires:	qt-devel
+BuildRequires:	qwt-devel
 
 %description
 
@@ -49,17 +51,22 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
 fi
 
 %setup -n %{_name}
-
-%build
 export PKG_CONFIG_PATH=%{_libdir}/pkgconfig
 cd src
 ./autogen.sh
-%configure --enable-earthWatcher
+%configure --enable-earthWatcher --with-qwt=/usr
+
+%build
+cd src
 make DESTDIR=$RPM_BUILD_ROOT
+cd clients/legacyWatcher
+qmake-qt4
+make
 
 %install
 cd src
 make DESTDIR=$RPM_BUILD_ROOT install
+%{__install} -m0755 clients/legacyWatcher/watcher %{buildroot}%{_bindir}/
 
 %clean
 if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
@@ -70,8 +77,10 @@ fi
 %defattr(-,root,root,-)
 
 %dir %{_bindir}
+%{_bindir}/watcher
 %{_bindir}/connectivity2dot
 %{_bindir}/earthWatcher
+%{_bindir}/gps2eventdb
 %{_bindir}/messageStream2Text
 %{_bindir}/randomScenario
 %{_bindir}/routeFeeder
