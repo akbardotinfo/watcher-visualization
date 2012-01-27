@@ -1,0 +1,13 @@
+# Common definitions for client apps
+# included in every client Makefile.in
+
+include $(top_srcdir)/Makefile.top
+
+CPPFLAGS += -I$(top_srcdir)/clients/include 
+CPPFLAGS += @LIBYAML_CFLAGS@
+
+AM_LDFLAGS=-Wl,-rpath=$(libdir)
+LDADD = $(top_srcdir)/libwatcher/libwatcher.a
+LDADD += $(top_srcdir)/util/libwatcherutils.a 
+LDADD += @LIBYAML_LIBS@
+
