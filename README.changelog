@@ -1,0 +1,159 @@
+Version 0.7: 
+- On the wire message represenation is now YAML-based. There is no support for backwards
+compatibility! If people need it, I can write a utility to convert older databases. This was
+done primarily for code clean up and stablility. There is now only one watcher libarary: 
+libwatcher. There is no libwatchermsg anymore. No issues with templates not being 
+instantiated inside a shared library. libwatcher.a can be linked at compile time. 
+
+Version 0.6.5.5:
+- New GUI: messageStreamController. This is a self-contained message stream manipulation GUI. 
+    It is essentially the message stream control widgets from the legacy watcher, ripped
+    out and put in a stand alone GUI. Using the messageStreamController you can pause/FF/rew
+    a message stream. Also you can rename, join, exit from message streams. The use case
+    for messageStreamController is that you start one to control all GUIs attached to 
+    a specfic message stream. Useful as some of the GUIs (earthWatcher, dataWatcher)
+    don't have built-in message stream manipulation widgets/functionality.
+- all: various bugfixes!
+- some user guide updates. Still woefully out of data though. Next release will be a 
+    documention update, so stay tuned. 
+Versions 0.6.5.4:
+- all 
+    - watcherd and all GUIs now handle configuration file permissions sanely instead of
+    exiting with unhandled exception.  If no-read, exit. If no-write, warn the user at 
+    start and end time that changes are not saved.
+- watcherd
+    - watcherd now takes --address and --port args on the command line. Command line 
+    overrides cfg and is saved to cfg on exit. Attempts to use an address that is not 
+    locally valid causes an exeception.
+- dataWatcher
+    - dataWatcher now automatically tell watcherd to only send it control and data 
+    point messages. This should drastically reduce the number of unneeded messages on 
+    the wire send to dataWatcher instances. 
+Versions 0.6.5.3:
+- dataWatcher
+    - added [-s server] and [-l loglevel] as command line arguments. 
+Versions 0.6.5.2:
+- watcher
+    - added crude global view option. Displays a global view of the playing field in the 
+    lower right of the window when toggled.
+    - adde click to zoom functionality. When the user control-double-clicks on a node, 
+    the display will zoom into that node. 
+    - gpsScale now takes into account the size of the current playing field, so the
+    value is more reasonable: 50-1000 instead of 1-80000. A single value should work for 
+    most mobility scenarios. 
+- other
+    - randomScenario: make gps look like gps data instead of meters from 0,0,0. renamed 
+    width/height/depth command line args to --eastWest (-E), --northSouth (-N), and 
+    --upDown (-U) to make things clearer
+Versions 0.6.5.1:
+- other
+    - bug fix for build system. Was attempting to build gps2eventdb in a test node only build. 
+Versions 0.6.5:
+- dataWatcher
+    - now it exists. 
+
+Version 0.6.4.2:
+- build system
+    - added --with-kml-libdir and --with-qwt-libdir arguments to ./configure. This is to support
+    those libraries being installed in non-standard locations relative to the install dir.
+- watcher
+    - Handle bidirectional edges better and correcter. 
+    - Added perl script, showPath, which draws a path using edges between two nodes on 
+    the data network. Must be run on the src of the path. Uses traceroute to get the 
+    dynamic path, then sendEdgeMessage to draw the path. So both must be installed and 
+    in the $PATH.
+- watcherd
+    - added two new args to watcherd, both for logging. -l loglevel and -L log.props.file. 
+    This will give move control over logging (even turning it off via '-l off') and stop the 
+    confusing log4cxx errors on start when the log.props file is not found. These arguments
+    are exactly the same as the equiv args to legacy watcher. 
+    - bugfix: removed LIMIT from sql statement that gathered messages to send. This fixes
+    bug that caused not all messages to be sent if there were many messages at the same
+    timestamp
+- other
+    - new client: gps2eventdb. This binary takes a MANE scenario file and related GPS 
+    data files (log or spec format) and generates an event.db with GPS messages and connectivity
+    messages. Connectivity is based on user supplied radio radius and is a binary loss model.
+
+Version 0.6.4.1:
+- legacy watcher
+    - Added a node configuration dialog. This allows the user to modify the node configuration
+    via the GUI. The configuration that can be changed is color, label, label color, label
+    font, label font color, and node shape. The dialog has two modes, global mode and single
+    node mode. In global mode configuration changes in the dialog affect all nodes. In 
+    single node mode, the changes only affect the selected node. To go from global (the
+    default) to single node mode, the user double-clicks a node in the main GUI window. To 
+    go back to global mode, the user double-clicks the selected node. The selected node is 
+    highlighted in the main window by having a white cube drawn around it. Thhe dialog 
+    is not modal and all changes made are immediately rendered in the main window.
+
+    - Added a "background grid" option. The option can be found under the 'view' menu. 
+    If toggled, a green grid is drawn at just below ground level. This is to help the user
+    clearly see which way is up when running configurations with large z-axis differences. 
+
+    - Added a "new stream" button on the list streams dialog. If pushed a new stream is created 
+    for the GUI - if joined to an existing stream, the connection will be broken.
+
+Version 0.6.4:
+- legacy watcher
+    - Added layer configuration dialog. This allows the user to modify layer settings 
+    on the fly via a dialog. The dialog can be assessed via Configuration->Layers. The 
+    dialog will also pop-up when it sees a new layer for the very first time. This does 
+    not include layers that have been read from the cfg file - just layers it has not 
+    seen from the watcher daemon. Changes made in the layer configuration dialog are 
+    immediately visible in the main window. Layers can be toggled from dialog. 
+    All changes made to the layers are remembered and written out to the watcher 
+    configuration file so that the next time watcher is run, the changes are still 
+    there. 
+    - The GUI now handles a disconnnect from teh daemon correctly, or at least better.
+    If the daemon disconnects, the GUI will display the frowny-face and attempt
+    to re-connect every 2 seconds. Once the daemon comes back up, the GUI connects
+    and restarts playing at the start of the database. 
+
+Version 0.6.3:
+- legacy watcher
+    - rewrote internal graph structure, should be able to handle 1000's of nodes now. 
+    Users now need to tell the GUI how many nodes and layers to expect at start time
+    though. This is so the structure can be optimized. 
+    - cleaned up command line arguments. Now cleaner and work.
+    - cleaned up configuration file writing and reading.
+    - added working "logLevel" command line argument
+    - If watcher does not have needed configuration at start time, it now diplays
+    a popup dialog requesting this information from the user. The information
+    provided is then saved to the cfg file on exit.
+
+- watcherd
+    - removed "live mode" internals. Everything plays from the database now. Stops 
+    messages from backing when GUIs don't process messages fast enough. 
+
+Version 0.6.2.2:
+- all 
+    - This release has fully implemented synced stream functionality. The legacy 
+    watcher now has full GUI support for naming the local stream and subscribing to an 
+    external stream. Still to do: adding 'break stream' functionality to disconnect 
+    from a stream. 
+
+- watcherd 
+    - This release also has a few performance bug fixes in the watcherd 
+    that were done on-site at ARL when testing on a large scale test.
+
+- other
+    - There is also  now (untested) support for RPM builds of the watcher, although 
+    that is less important at ARL as they use NiCE. There are RPM spec files for
+    all watcher packages. May roll out a yum repo at some point for watcher. 
+
+- legacy watcher
+    - minor bug fixes
+    - fix to revert a bug introduced while adding the debug overlay which caused 
+    OpenGL errors in color and depth testing. Colors were not transparent even if 
+    specified to be and objects were being incorrectly drawn on top of each other. 
+
+Version 0.6.2.1:
+- stuff!
+
+Older:
+If you really need to know, contact the AUTHORs.
+
+
+
+
